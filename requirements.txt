@@ -1,0 +1,13 @@
+# Generals.io RL agent dependencies
+#
+# torch: for RTX 50-series (Blackwell) use the cu128 build:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# On other GPUs a plain `pip install torch` is fine.
+torch>=2.7
+
+# generals.io game environment (Gymnasium numpy version)
+generals-bots==2.5.0
+
+gymnasium>=1.0.0
+tensorboard>=2.18.0
+numpy>=2.1.0

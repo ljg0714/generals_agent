@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Training artifacts
+checkpoints/
+runs/
+videos/
+*.pt
+*.eqx
+
+# Misc
+.DS_Store
+Thumbs.db
