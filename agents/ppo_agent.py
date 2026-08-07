@@ -24,8 +24,8 @@ class PPOAgent(Agent):
         id: str = "PPO",
     ):
         super().__init__(id=id)
-        self.network = network
         self.device = torch.device(device)
+        self.network = network.to(self.device)
         self.pad_to = pad_to
         self.greedy = greedy
         self.network.eval()

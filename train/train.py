@@ -297,6 +297,10 @@ def parse_args():
     p.add_argument("--eval-games", type=int, default=20)
     p.add_argument("--no-curriculum", action="store_true", help="disable map-size curriculum")
     p.add_argument("--curriculum-eval-games", type=int, default=None)
+    p.add_argument("--init-from-pretrained", type=str, default=None,
+                   help="warm-start from a behavior-cloned policy (.pt from train/pretrain.py)")
+    p.add_argument("--ent-coef", type=float, default=None, help="override entropy coefficient")
+    p.add_argument("--lr", type=float, default=None, help="override learning rate")
     p.add_argument("--seed", type=int, default=None)
     return p.parse_args()
 
@@ -305,19 +309,30 @@ def apply_args(cfg, args):
     if args.num_envs: cfg.NUM_ENVS = args.num_envs
     if args.num_steps: cfg.NUM_STEPS = args.num_steps
     if args.iterations: cfg.NUM_ITERATIONS = args.iterations
-    if args.grid_min: cfg.MIN_GRID_DIMS = (args.grid_min, args.grid_min)
-    if args.grid_max:
-        cfg.MAX_GRID_DIMS = (args.grid_max, args.grid_max)
+    if args.grid_min or args.grid_max:
+        gmin = args.grid_min if args.grid_min is not None else args.grid_max
+        gmax = args.grid_max if args.grid_max is not None else args.grid_min
+        cfg.MIN_GRID_DIMS = (gmin, gmin)
+        cfg.MAX_GRID_DIMS = (gmax, gmax)
         # Pad observations to just above the largest grid instead of the full 24
         # (cheaper visibility filters, smaller network, faster stepping).
-        cfg.PAD_TO = max(cfg.PAD_TO, args.grid_max + 2)
+        cfg.PAD_TO = max(cfg.PAD_TO, gmax + 2)
     if args.truncation: cfg.TRUNCATION = args.truncation
     if args.no_selfplay: cfg.SELFPLAY_PROB = 0.0
     if args.checkpoint_interval: cfg.CHECKPOINT_INTERVAL = args.checkpoint_interval
     if args.eval_interval: cfg.EVAL_INTERVAL = args.eval_interval
     if args.save_to_pool_interval: cfg.SAVE_TO_POOL_INTERVAL = args.save_to_pool_interval
     if args.curriculum_eval_games: cfg.CURRICULUM_EVAL_GAMES = args.curriculum_eval_games
+    if args.ent_coef is not None: cfg.ENT_COEF = args.ent_coef
+    if args.lr is not None: cfg.LEARNING_RATE = args.lr
     if args.seed: cfg.SEED = args.seed
+    # Warm-started (BC) policies are already near-deterministic; the default
+    # entropy bonus (0.01) and LR (3e-4) destroy them during fine-tuning.
+    # Lower both unless the user overrides explicitly.
+    if args.init_from_pretrained and args.ent_coef is None:
+        cfg.ENT_COEF = min(cfg.ENT_COEF, 0.001)
+    if args.init_from_pretrained and args.lr is None:
+        cfg.LEARNING_RATE = min(cfg.LEARNING_RATE, 1e-4)
     # Curriculum is disabled by explicit flag or by a fixed-grid CLI override.
     if args.no_curriculum or args.grid_min or args.grid_max:
         cfg.CURRICULUM = None
@@ -362,6 +377,20 @@ def main():
     n_params = sum(p.numel() for p in network.parameters())
     print(f"Network parameters: {n_params:,}")
     optimizer = torch.optim.Adam(network.parameters(), lr=config.LEARNING_RATE, eps=1e-5)
+
+    # Optional behavior-cloning warm-start
+    if args.init_from_pretrained:
+        state = torch.load(args.init_from_pretrained, map_location="cpu")
+        if isinstance(state, dict) and "model_state" in state:
+            state = state["model_state"]
+        net_state = network.state_dict()
+        loaded = 0
+        for k, v in state.items():
+            if k in net_state and net_state[k].shape == v.shape:
+                net_state[k] = v
+                loaded += 1
+        network.load_state_dict(net_state)
+        print(f"Warm-started from {args.init_from_pretrained}: loaded {loaded}/{len(net_state)} params")
 
     # Self-play pool + bots
     pool = OpponentPool(network, device=device, pad_to=config.PAD_TO, pool_size=config.POOL_SIZE)

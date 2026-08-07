@@ -12,7 +12,14 @@ VIDEO_DIR = os.path.join(BASE_DIR, "videos")
 # Environment
 # ---------------------------------------------------------------------------
 PAD_TO = 24                 # observations are zero-padded to PAD_TO x PAD_TO
-TRUNCATION = 500            # max game steps before truncation
+TRUNCATION = 1000           # max game steps before truncation (was 500 — games
+                            # on 12-14 maps rarely finished, causing ~90% draws)
+
+# Army growth (patched via agents/game_patch.py to match real generals.io).
+# Real generals.io: each owned cell produces +1 army every ~25 turns, and
+# cities/the general produce +1 every turn.
+ARMY_INCREMENT_RATE = 25    # per-cell +1 period (was 50 in generals-bots)
+CITY_GROWTH_PERIOD = 1      # owned general/city cells produce +1 every N steps
 
 # ---------------------------------------------------------------------------
 # Map generation (GridFactory)
@@ -76,8 +83,8 @@ SAVE_TO_POOL_INTERVAL = 100   # iterations before snapshotting the current polic
 #   largest stage (PAD_TO = final grid + 2) so checkpoints stay compatible
 #   across stages. Set CURRICULUM = None to disable (or use --no-curriculum).
 CURRICULUM = [
-    (8, 8,   0.7, 800),   # learn basics: expansion, combat on tiny maps
-    (10, 12, 0.6, 800),   # transfer to medium maps
+    (8, 8,   0.7, 2000),  # learn basics: expansion, combat on tiny maps
+    (10, 12, 0.6, 2000),  # transfer to medium maps
     (12, 14, 0.0, 0),     # final: standard size, no advance
 ]
 CURRICULUM_EVAL_INTERVAL = 50
@@ -85,8 +92,16 @@ CURRICULUM_EVAL_GAMES = 20
 
 # ---------------------------------------------------------------------------
 # Reward shaping (potential-based, ported from the generals-bots paper)
+# The potential combines RELATIVE (ratio) terms with ABSOLUTE (log) terms:
+#   pot = RATIO_WEIGHT*(army_ratio + land_ratio)
+#       + ABS_WEIGHT*(log1p(land) + log1p(army))   # dense signal per step
+#       + CASTLE_WEIGHT*castles
+# Ratio-only potentials are ~0 while both players grow together (log(1)=0),
+# which starved learning in the 2000-iteration run. The absolute terms give
+# every captured cell / gained army a positive signal.
 # ---------------------------------------------------------------------------
 MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3
-RATIO_WEIGHT = 0.3
+RATIO_WEIGHT = 0.2
+ABS_WEIGHT = 0.1
 CASTLE_WEIGHT = 0.4

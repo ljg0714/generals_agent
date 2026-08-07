@@ -35,8 +35,16 @@ python verify_env.py
 # 冒烟测试（小地图、少量环境，验证训练管线）
 python train/train.py --num-envs 8 --num-steps 32 --iterations 20 --grid-min 6 --grid-max 6 --no-selfplay
 
-# 正式训练（配置在 config.py，默认开启地图尺寸课程 + self-play）
+# 行为克隆热启动（推荐，先让策略有基本玩法再 RL 微调）
+python train/generate_data.py --games 200 --grid-max 8 --out checkpoints/dataset_8x8.npz
+python train/pretrain.py --data checkpoints/dataset_8x8.npz --out checkpoints/pretrained_8x8.pt --epochs 6
+
+# 正式训练（配置在 config.py，默认开启地图尺寸课程 + self-play；可从预训练权重起步）
 python train/train.py
+python train/train.py --init-from-pretrained checkpoints/pretrained_8x8.pt
+
+# 注：warm-start 微调会自动把 entropy 系数降到 0.001、LR 降到 1e-4（默认 0.01/3e-4 会毁掉
+# 已预训练的确定性策略，实测熵会从 2.6 涨到 6、胜率归零）。可用 --ent-coef/--lr 覆盖。
 
 # 参数覆盖示例
 python train/train.py --num-envs 64 --iterations 5000 --run-name grid18
@@ -86,10 +94,20 @@ verify_env.py           # 环境冒烟测试
 
 ## 训练策略
 
-- **奖励**：非终止步使用势能差塑形（`potential(s') - potential(s)`，含兵力比、地盘比、城堡数），终止步给 +1/-1
+- **奖励**：非终止步使用势能差塑形（`potential(s') - potential(s)`），**合并比值势能（兵力比/地盘比）+ 绝对量势能（log 地盘/log 兵力）+ 城堡数**，终止步给 +1/-1。比值势能在双方同涨时≈0，绝对量项让每扩一格/增一兵都有正信号
+- **兵力增长对齐真实 generals.io**：`agents/game_patch.py` 把 `Game._global_game_update` 改成每 25 步每格 +1、城堡/将军每步产出（默认 `Game` 每 50 步每格 +1、城堡每 2 步，导致大图对局打不完、几乎全是超时平局）
 - **Self-play**：对手池保留最近 N 个策略快照，环境每次重置时采样新对手（可混入 RandomAgent / ExpanderAgent 作为课程前期对手）
+- **行为克隆热启动**：用 ExpanderAgent 等规则 bot 自对弈生成数据集，监督预训练策略再 RL 微调（论文的核心技巧，能显著加速收敛）
 - **地图尺寸课程**：默认分阶段 8×8 → 10×12 → 12×14。每阶段对当前地图上 bot 的贪婪评估胜率达到阈值即晋级（或达到该阶段迭代数上限防止卡死），网络按最大地图固定尺寸，跨阶段断点兼容。见 `config.py` 的 `CURRICULUM`
 - **动作空间**：每 tick 从 9 通道动作（4 方向 × 全量/半量 + 跳过）中采样，用 `compute_valid_move_mask` 屏蔽非法移动
+
+## 项目结构（新增文件）
+
+```
+agents/game_patch.py       # FastGame：增长对齐真实 generals.io（monkeypatch 注入 env）
+train/generate_data.py     # 规则 bot 自对弈生成行为克隆数据集 (.npz)
+train/pretrain.py          # 监督预训练策略（--init-from-pretrained 接入 train.py）
+```
 
 ## 后续路线
 

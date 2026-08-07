@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import numpy as np
 
-# Weights (match the generals-bots composite_reward_fn defaults)
+# Weights (ratio + absolute potentials combined; see `potentials`).
 MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3
-RATIO_WEIGHT = 0.3
+RATIO_WEIGHT = 0.2
+ABS_WEIGHT = 0.1
 CASTLE_WEIGHT = 0.4
 
 
@@ -47,11 +48,22 @@ def castles_owned(obs_batch: np.ndarray) -> np.ndarray:
 
 
 def potentials(obs_batch: np.ndarray) -> np.ndarray:
-    """Shaping potential for a batch of observations (B, 15, H, W)."""
-    return (
-        RATIO_WEIGHT * (army_ratio_potential(obs_batch) + land_ratio_potential(obs_batch))
-        + CASTLE_WEIGHT * castles_owned(obs_batch)
+    """Shaping potential for a batch of observations (B, 15, H, W).
+
+    Combines RELATIVE (ratio) and ABSOLUTE (log) terms so the signal is dense:
+      ratio    = RATIO_WEIGHT * (army_ratio_pot + land_ratio_pot)
+      absolute = ABS_WEIGHT * (log1p(land) + log1p(army))   # every gain counts
+      castles  = CASTLE_WEIGHT * castles_owned
+    Ratio-only potentials stay near 0 while both players grow together
+    (log(1)=0); the absolute terms give a positive signal for every captured
+    cell / gained army, which the ratio terms miss.
+    """
+    ratio = RATIO_WEIGHT * (army_ratio_potential(obs_batch) + land_ratio_potential(obs_batch))
+    absolute = ABS_WEIGHT * (
+        np.log1p(obs_batch[:, 9, 0, 0]) + np.log1p(obs_batch[:, 10, 0, 0])
     )
+    castles = CASTLE_WEIGHT * castles_owned(obs_batch)
+    return ratio + absolute + castles
 
 
 def composite_reward(prior_obs: np.ndarray, obs: np.ndarray, terminated: np.ndarray) -> np.ndarray:
