@@ -62,6 +62,24 @@ def make_env(cfg, opponent=None) -> GeneralsEnv:
     )
 
 
+def rebuild_envs(cfg, num_envs, pool, bot_pool, seed):
+    """Create fresh envs (used at start and on curriculum advance)."""
+    envs = [make_env(cfg) for _ in range(num_envs)]
+    opp_agents = [None] * num_envs
+    rng = np.random.default_rng(seed)
+    for i, env in enumerate(envs):
+        env.reset(seed=seed * 10_000 + i)
+        opp_agents[i] = sample_opponent(pool, bot_pool, cfg, rng)
+        env.set_opponent(opp_agents[i])
+    return envs, opp_agents
+
+
+def curriculum_stage_dims(cfg, stage_idx):
+    """Return (min_grid, max_grid) for a curriculum stage."""
+    min_g, max_g, _, _ = cfg.CURRICULUM[stage_idx]
+    return (min_g, min_g), (max_g, max_g)
+
+
 # ---------------------------------------------------------------------------
 # Opponent handling
 # ---------------------------------------------------------------------------
@@ -277,6 +295,8 @@ def parse_args():
     p.add_argument("--eval-interval", type=int, default=None)
     p.add_argument("--save-to-pool-interval", type=int, default=None)
     p.add_argument("--eval-games", type=int, default=20)
+    p.add_argument("--no-curriculum", action="store_true", help="disable map-size curriculum")
+    p.add_argument("--curriculum-eval-games", type=int, default=None)
     p.add_argument("--seed", type=int, default=None)
     return p.parse_args()
 
@@ -296,12 +316,29 @@ def apply_args(cfg, args):
     if args.checkpoint_interval: cfg.CHECKPOINT_INTERVAL = args.checkpoint_interval
     if args.eval_interval: cfg.EVAL_INTERVAL = args.eval_interval
     if args.save_to_pool_interval: cfg.SAVE_TO_POOL_INTERVAL = args.save_to_pool_interval
+    if args.curriculum_eval_games: cfg.CURRICULUM_EVAL_GAMES = args.curriculum_eval_games
     if args.seed: cfg.SEED = args.seed
+    # Curriculum is disabled by explicit flag or by a fixed-grid CLI override.
+    if args.no_curriculum or args.grid_min or args.grid_max:
+        cfg.CURRICULUM = None
+    if cfg.CURRICULUM is not None:
+        final_max = max(s[1] for s in cfg.CURRICULUM)
+        cfg.PAD_TO = max(cfg.PAD_TO, final_max + 2)
 
 
 def main():
     args = parse_args()
     apply_args(config, args)
+
+    # Map-size curriculum: start on the first stage's grid
+    curriculum_enabled = config.CURRICULUM is not None
+    cur_stage = 0
+    stage_start_iter = 0
+    if curriculum_enabled:
+        config.MIN_GRID_DIMS, config.MAX_GRID_DIMS = curriculum_stage_dims(config, 0)
+        print(f"Curriculum ON: {len(config.CURRICULUM)} stages "
+              f"({config.CURRICULUM[0][0]} -> {config.CURRICULUM[-1][1]}), "
+              f"starting on {config.MIN_GRID_DIMS[0]}x{config.MIN_GRID_DIMS[0]}")
 
     torch.manual_seed(config.SEED)
     np.random.seed(config.SEED)
@@ -331,12 +368,7 @@ def main():
     bot_pool = [RandomAgent(), ExpanderAgent(), RandomAgent(), ExpanderAgent()]
 
     # Environments
-    envs = [make_env(config) for _ in range(config.NUM_ENVS)]
-    opp_agents = [None] * config.NUM_ENVS
-    for i, env in enumerate(envs):
-        env.reset(seed=config.SEED * 10_000 + i)
-        opp_agents[i] = sample_opponent(pool, bot_pool, config, np.random.default_rng())
-        env.set_opponent(opp_agents[i])
+    envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool, config.SEED)
 
     global_step = 0
     best_eval = -1.0
@@ -403,6 +435,29 @@ def main():
                 torch.save({"model_state": network.state_dict(), "iteration": iteration + 1,
                             "global_step": global_step},
                            os.path.join(config.CHECKPOINT_DIR, "best.pt"))
+
+        # Curriculum advance: bigger maps once the current stage is mastered
+        if curriculum_enabled and cur_stage < len(config.CURRICULUM) - 1 and \
+                (iteration + 1) % config.CURRICULUM_EVAL_INTERVAL == 0:
+            results = evaluate(network, config, num_games=config.CURRICULUM_EVAL_GAMES,
+                               device=device, greedy=True, seed=config.SEED + iteration)
+            win_rate = float(np.mean([r["win_rate"] for r in results.values()]))
+            _, _, bar, cap = config.CURRICULUM[cur_stage]
+            iterations_in_stage = (iteration + 1) - stage_start_iter
+            if win_rate >= bar or (cap and iterations_in_stage >= cap):
+                cur_stage += 1
+                if cur_stage < len(config.CURRICULUM):
+                    config.MIN_GRID_DIMS, config.MAX_GRID_DIMS = curriculum_stage_dims(config, cur_stage)
+                    envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool,
+                                                    config.SEED + cur_stage)
+                    stage_start_iter = iteration + 1
+                    print(f"  [curriculum] advanced to stage {cur_stage}: "
+                          f"{config.MIN_GRID_DIMS[0]}x{config.MIN_GRID_DIMS[0]}-"
+                          f"{config.MAX_GRID_DIMS[1]}x{config.MAX_GRID_DIMS[1]} "
+                          f"(eval win_rate {win_rate:.2f} vs bar {bar})")
+                    writer.add_scalar("curriculum/stage", cur_stage, global_step)
+                else:
+                    print("  [curriculum] reached final stage")
 
     writer.close()
     total_time = time.time() - t_start

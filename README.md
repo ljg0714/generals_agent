@@ -35,11 +35,15 @@ python verify_env.py
 # 冒烟测试（小地图、少量环境，验证训练管线）
 python train/train.py --num-envs 8 --num-steps 32 --iterations 20 --grid-min 6 --grid-max 6 --no-selfplay
 
-# 正式训练（配置在 config.py，默认 12x12~14x14 + self-play）
+# 正式训练（配置在 config.py，默认开启地图尺寸课程 + self-play）
 python train/train.py
 
 # 参数覆盖示例
-python train/train.py --num-envs 64 --iterations 5000 --grid-min 12 --grid-max 18 --run-name grid18
+python train/train.py --num-envs 64 --iterations 5000 --run-name grid18
+
+# 关闭课程学习（固定地图）
+python train/train.py --no-curriculum
+python train/train.py --grid-min 12 --grid-max 14   # 传地图参数时自动退化为固定地图
 ```
 
 训练指标（胜率、熵、奖励、SPS）写入 TensorBoard：
@@ -84,6 +88,7 @@ verify_env.py           # 环境冒烟测试
 
 - **奖励**：非终止步使用势能差塑形（`potential(s') - potential(s)`，含兵力比、地盘比、城堡数），终止步给 +1/-1
 - **Self-play**：对手池保留最近 N 个策略快照，环境每次重置时采样新对手（可混入 RandomAgent / ExpanderAgent 作为课程前期对手）
+- **地图尺寸课程**：默认分阶段 8×8 → 10×12 → 12×14。每阶段对当前地图上 bot 的贪婪评估胜率达到阈值即晋级（或达到该阶段迭代数上限防止卡死），网络按最大地图固定尺寸，跨阶段断点兼容。见 `config.py` 的 `CURRICULUM`
 - **动作空间**：每 tick 从 9 通道动作（4 方向 × 全量/半量 + 跳过）中采样，用 `compute_valid_move_mask` 屏蔽非法移动
 
 ## 后续路线

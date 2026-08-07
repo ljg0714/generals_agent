@@ -66,6 +66,24 @@ NUM_OPPONENT_GROUPS = 8       # distinct opponents sampled per rollout (for batc
 SAVE_TO_POOL_INTERVAL = 100   # iterations before snapshotting the current policy
 
 # ---------------------------------------------------------------------------
+# Curriculum learning (map-size stages)
+#   Each stage is (min_grid, max_grid, advance_win_rate, max_stage_iterations).
+#   - advance_win_rate: advance when the greedy eval win rate vs bots on the
+#     current stage's maps is >= this value.
+#   - max_stage_iterations: hard cap on iterations in the stage (0 = no cap);
+#     advances even if the win-rate bar was not met. Prevents stalls.
+#   The last stage is never advanced past. The policy network is sized for the
+#   largest stage (PAD_TO = final grid + 2) so checkpoints stay compatible
+#   across stages. Set CURRICULUM = None to disable (or use --no-curriculum).
+CURRICULUM = [
+    (8, 8,   0.7, 800),   # learn basics: expansion, combat on tiny maps
+    (10, 12, 0.6, 800),   # transfer to medium maps
+    (12, 14, 0.0, 0),     # final: standard size, no advance
+]
+CURRICULUM_EVAL_INTERVAL = 50
+CURRICULUM_EVAL_GAMES = 20
+
+# ---------------------------------------------------------------------------
 # Reward shaping (potential-based, ported from the generals-bots paper)
 # ---------------------------------------------------------------------------
 MAX_ARMY_RATIO = 1.6
