@@ -78,7 +78,7 @@ SAVE_TO_POOL_INTERVAL = 100   # iterations before snapshotting the current polic
 # the built-in bots, ramp toward self-play so opponents grow with it. The
 # residual bot fraction anchors against strategy drift.
 SELFPLAY_PROB_START = 0.5
-SELFPLAY_PROB_END = 0.9
+SELFPLAY_PROB_END = 0.75
 SELFPLAY_RAMP_ITERS = 2000
 
 # ---------------------------------------------------------------------------
@@ -113,15 +113,15 @@ MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3
 RATIO_WEIGHT = 0.2
 ABS_WEIGHT = 0.1
-CASTLE_WEIGHT = 0.4
+CASTLE_WEIGHT = 0.5
 
 # Time-dependent terms — encourage attacking efficiency / shorter games.
 # DRAW_PENALTY: reward for a truncation draw. Smaller than a loss (-1) so a
 #   draw is bad but not as bad as losing.
-DRAW_PENALTY = 0.5
+DRAW_PENALTY = 0.7
 # STEP_PENALTY: subtracted per step ONLY once an episode exceeds
 #   STEP_PENALTY_START steps. Short games are unpenalized (no premature
 #   rushing); only dragged-out games accumulate a small time cost. Keep the
 #   magnitude small relative to the terminal +-1 and the shaped reward.
 STEP_PENALTY = 0.002
-STEP_PENALTY_START = 300
+STEP_PENALTY_START = 200
