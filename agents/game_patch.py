@@ -1,15 +1,22 @@
-"""Patch the generals-bots numpy env to use generals.io-accurate army growth.
+"""Runtime patches that fix bugs in the installed generals-bots package.
 
-The default Game grows armies very slowly (+1 per owned cell every 50 steps,
-+1 on generals/cities every 2 steps), so games on 12-14 maps almost never
-finish before truncation — terminal rewards were essentially unreachable.
+1. Army growth. The default Game grows armies very slowly (+1 per owned cell
+   every 50 steps, +1 on generals/cities every 2 steps), so games on 12-14 maps
+   almost never finish before truncation — terminal rewards were essentially
+   unreachable. Real generals.io: every owned cell produces ~+1 army every 25
+   turns, and cities / the general produce +1 every turn. `FastGame` implements
+   that. The env constructs `Game` in both `GymnasiumGenerals.__init__` and
+   `reset()`; `patch_env_growth()` swaps the `Game` name in the env module for
+   `FastGame` (a subclass), so both construction points pick it up.
 
-Real generals.io: every owned cell produces ~+1 army every 25 turns, and
-cities / the general produce +1 every turn. `FastGame` implements that.
-
-The env constructs `Game` in both `GymnasiumGenerals.__init__` and `reset()`;
-`patch_env_growth()` swaps the `Game` name in the env module for `FastGame`
-(a subclass), so both construction points pick it up.
+2. GUI clock. `generals.gui.properties.Properties` declares
+   `__clock: Clock = Clock()` as a dataclass *class-level* default, so every
+   `GUI` shares ONE Clock. `env.close()` calls `pygame.quit()`, which resets
+   SDL's tick timebase to ~0 while the shared Clock's `last_tick` still holds the
+   previous episode's timestamp. The next episode's first `clock.tick(fps)` then
+   computes a huge negative frame time and `SDL_Delay()`s for ~the previous
+   episode's duration — play.py appears frozen at episode 2. `patch_gui_clock()`
+   gives each `Properties` instance its own fresh Clock.
 """
 from __future__ import annotations
 
@@ -43,3 +50,32 @@ def patch_env_growth():
     import generals.envs.gymnasium_generals as gg
 
     gg.Game = FastGame
+
+
+def patch_gui_clock():
+    """Give each GUI its own fresh Clock instead of the shared class-level one.
+
+    Idempotent. `Properties`' dataclass field `__clock: Clock = Clock()` is
+    evaluated once at class-definition time, so every Properties instance reads
+    the SAME Clock. After `pygame.quit()` (from `env.close()`), SDL resets its
+    tick timebase but the shared Clock's `last_tick` keeps the previous episode's
+    timestamp; the next `clock.tick(fps)` then waits `1/fps - (tick_now - stale)`,
+    which is huge, and the window appears frozen for ~the previous episode's
+    duration. Replacing `__init__` gives each instance its own fresh Clock.
+    """
+    from pygame.time import Clock
+    from generals.gui import properties as _props
+
+    if getattr(_props.Properties, "_clock_patched", False):
+        return
+
+    _orig_init = _props.Properties.__init__
+
+    def _init(self, game, agent_data, mode, game_speed=1.0):
+        _orig_init(self, game, agent_data, mode, game_speed)
+        # Dataclass name-mangles `__clock` to `_Properties__clock`; replace the
+        # shared class-level Clock with one that starts fresh for this GUI.
+        self._Properties__clock = Clock()
+
+    _props.Properties.__init__ = _init
+    _props.Properties._clock_patched = True

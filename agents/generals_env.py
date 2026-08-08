@@ -14,7 +14,7 @@ from generals.core.action import Action
 from generals.core.grid import GridFactory
 from generals.envs.gymnasium_generals import GymnasiumGenerals
 
-from agents.game_patch import patch_env_growth
+from agents.game_patch import patch_env_growth, patch_gui_clock
 
 
 class GeneralsEnv(gym.Env):
@@ -37,6 +37,8 @@ class GeneralsEnv(gym.Env):
         self.pad_to = pad_observations_to
         # Use generals.io-accurate army growth (config-driven, idempotent).
         patch_env_growth()
+        # Fix the shared-Clock GUI freeze when a second episode's window opens.
+        patch_gui_clock()
         self._env = GymnasiumGenerals(
             agents=[agent_id, opponent_id],
             grid_factory=grid_factory or GridFactory(),
