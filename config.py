@@ -15,16 +15,14 @@ PAD_TO = 24                 # observations are zero-padded to PAD_TO x PAD_TO
 TRUNCATION = 1000           # max game steps before truncation (was 500 — games
                             # on 12-14 maps rarely finished, causing ~90% draws)
 
-# Army growth (patched via agents/game_patch.py).
-# NOTE / KNOWN CAVEAT: these values are 2x FASTER than real generals.io.
-# In the env, 2 steps = 1 real turn, so the faithful rates are
-# ARMY_INCREMENT_RATE=50 (per-cell +1 per 25 turns) and CITY_GROWTH_PERIOD=2
-# (city/general +1 per turn). The 2x values below were adopted to make games
-# resolve fast enough for training, but a policy trained on them does NOT
-# transfer faithfully to the real game. Revert to (50, 2) and retrain before
-# deploying to the live generals.io server.
-ARMY_INCREMENT_RATE = 25    # per-cell +1 period (2x faster than real generals.io)
-CITY_GROWTH_PERIOD = 1      # owned general/city cells produce +1 every N steps (2x faster)
+# Army growth (patched via agents/game_patch.py) — FAITHFUL to real generals.io.
+# In this env 2 steps = 1 real turn, so per-cell +1 every 50 steps = every 25
+# turns (matches real floor(land/25)) and cities/the general produce +1 every
+# 2 steps = every turn. Games take ~150-500 steps to resolve, which is
+# realistic. For faster training you could set 25/1, but a policy trained on
+# the faster rate does NOT transfer faithfully to the real game.
+ARMY_INCREMENT_RATE = 50    # per-cell +1 period (= every 25 real turns)
+CITY_GROWTH_PERIOD = 2      # owned general/city cells +1 every N steps (= every real turn)
 
 # ---------------------------------------------------------------------------
 # Map generation (GridFactory)
@@ -88,8 +86,8 @@ SAVE_TO_POOL_INTERVAL = 100   # iterations before snapshotting the current polic
 #   largest stage (PAD_TO = final grid + 2) so checkpoints stay compatible
 #   across stages. Set CURRICULUM = None to disable (or use --no-curriculum).
 CURRICULUM = [
-    (8, 8,   0.7, 2000),  # learn basics: expansion, combat on tiny maps
-    (10, 12, 0.6, 2000),  # transfer to medium maps
+    (8, 8,   0.8, 2000),  # learn basics: expansion, combat on tiny maps
+    (10, 12, 0.7, 2000),  # transfer to medium maps
     (12, 14, 0.0, 0),     # final: standard size, no advance
 ]
 CURRICULUM_EVAL_INTERVAL = 50

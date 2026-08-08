@@ -1,14 +1,12 @@
 """Runtime patches that fix bugs in the installed generals-bots package.
 
-1. Army growth (2x FASTER than real generals.io — deliberate training speedup).
-   In this env 2 steps = 1 real turn, so the *default* generals-bots growth
-   (+1 per owned cell every 50 steps = every 25 turns, +1 on generals/cities
-   every 2 steps = every turn) is already faithful to real generals.io.
-   `FastGame` speeds growth up 2x (+1 per cell every 25 steps, cities/generals
-   every step) so games on 12-14 maps resolve quickly enough for RL training.
-   CAVEAT: policies trained with FastGame will NOT transfer faithfully to the
-   real game — revert to the faithful rates (config ARMY_INCREMENT_RATE=50,
-   CITY_GROWTH_PERIOD=2) and retrain before deploying to the live server.
+1. Army growth (config-driven, currently FAITHFUL to real generals.io).
+   In this env 2 steps = 1 real turn. Faithful growth = +1 per owned cell every
+   50 steps (= every 25 turns, matches real floor(land/25)) and +1 on
+   generals/cities every 2 steps (= every real turn). `FastGame` reads
+   ARMY_INCREMENT_RATE / CITY_GROWTH_PERIOD from config, so you can also set a
+   faster 25/1 for training speed, but policies trained on the faster rate do
+   NOT transfer faithfully to the real game.
    The env constructs `Game` in both `GymnasiumGenerals.__init__` and
    `reset()`; `patch_env_growth()` swaps the `Game` name in the env module for
    `FastGame` (a subclass), so both construction points pick it up.

@@ -96,7 +96,7 @@ verify_env.py           # 环境冒烟测试
 
 - **奖励**：非终止步使用势能差塑形（`potential(s') - potential(s)`），**合并比值势能（兵力比/地盘比）+ 绝对量势能（log 地盘/log 兵力）+ 城堡数**，终止步给 +1/-1。比值势能在双方同涨时≈0，绝对量项让每扩一格/增一兵都有正信号
 - **时间相关项**（鼓励攻击效率、减少拖局）：平局（截断）给 `-DRAW_PENALTY=0.5`（比输 -1 小）；每步时间惩罚 `-STEP_PENALTY=0.002` 仅在对局超过 `STEP_PENALTY_START=300` 步后才开始累计——短局不受影响，拖长的局才付时间成本
-- **兵力增长（训练加速，2× 快于真实 generals.io）**：本环境 2 步 = 真实 1 turn，原版 `Game`（每 50 步每格 +1、城堡每 2 步）其实已对齐真实游戏。`agents/game_patch.py` 的 `FastGame` 把增长调快 2×（每 25 步每格 +1、城堡每步产出）让大图对局能快速打完，但**用快增长训出的策略迁移到真实游戏会有偏差**——部署到 generals.io 服务器前需改回 `ARMY_INCREMENT_RATE=50, CITY_GROWTH_PERIOD=2` 并重训
+- **兵力增长（默认对齐真实 generals.io）**：本环境 2 步 = 真实 1 turn，`ARMY_INCREMENT_RATE=50`（每格 +1 每 25 turn）+ `CITY_GROWTH_PERIOD=2`（城堡/将军每 turn +1）。对局 ~150-500 步完结，节奏真实。`agents/game_patch.py` 的 `FastGame` 从 config 读这两个值，想加速训练可临时设 25/1，但快增长训出的策略不迁移真实游戏
 - **Self-play**：对手池保留最近 N 个策略快照，环境每次重置时采样新对手（可混入 RandomAgent / ExpanderAgent 作为课程前期对手）
 - **行为克隆热启动**：用 ExpanderAgent 等规则 bot 自对弈生成数据集，监督预训练策略再 RL 微调（论文的核心技巧，能显著加速收敛）
 - **地图尺寸课程**：默认分阶段 8×8 → 10×12 → 12×14。每阶段对当前地图上 bot 的贪婪评估胜率达到阈值即晋级（或达到该阶段迭代数上限防止卡死），网络按最大地图固定尺寸，跨阶段断点兼容。见 `config.py` 的 `CURRICULUM`
