@@ -15,11 +15,16 @@ PAD_TO = 24                 # observations are zero-padded to PAD_TO x PAD_TO
 TRUNCATION = 1000           # max game steps before truncation (was 500 — games
                             # on 12-14 maps rarely finished, causing ~90% draws)
 
-# Army growth (patched via agents/game_patch.py to match real generals.io).
-# Real generals.io: each owned cell produces +1 army every ~25 turns, and
-# cities/the general produce +1 every turn.
-ARMY_INCREMENT_RATE = 25    # per-cell +1 period (was 50 in generals-bots)
-CITY_GROWTH_PERIOD = 1      # owned general/city cells produce +1 every N steps
+# Army growth (patched via agents/game_patch.py).
+# NOTE / KNOWN CAVEAT: these values are 2x FASTER than real generals.io.
+# In the env, 2 steps = 1 real turn, so the faithful rates are
+# ARMY_INCREMENT_RATE=50 (per-cell +1 per 25 turns) and CITY_GROWTH_PERIOD=2
+# (city/general +1 per turn). The 2x values below were adopted to make games
+# resolve fast enough for training, but a policy trained on them does NOT
+# transfer faithfully to the real game. Revert to (50, 2) and retrain before
+# deploying to the live generals.io server.
+ARMY_INCREMENT_RATE = 25    # per-cell +1 period (2x faster than real generals.io)
+CITY_GROWTH_PERIOD = 1      # owned general/city cells produce +1 every N steps (2x faster)
 
 # ---------------------------------------------------------------------------
 # Map generation (GridFactory)
@@ -105,3 +110,14 @@ MAX_LAND_RATIO = 1.3
 RATIO_WEIGHT = 0.2
 ABS_WEIGHT = 0.1
 CASTLE_WEIGHT = 0.4
+
+# Time-dependent terms — encourage attacking efficiency / shorter games.
+# DRAW_PENALTY: reward for a truncation draw. Smaller than a loss (-1) so a
+#   draw is bad but not as bad as losing.
+DRAW_PENALTY = 0.5
+# STEP_PENALTY: subtracted per step ONLY once an episode exceeds
+#   STEP_PENALTY_START steps. Short games are unpenalized (no premature
+#   rushing); only dragged-out games accumulate a small time cost. Keep the
+#   magnitude small relative to the terminal +-1 and the shaped reward.
+STEP_PENALTY = 0.002
+STEP_PENALTY_START = 300

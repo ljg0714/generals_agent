@@ -183,10 +183,15 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg):
                     term_reward[i] = 1.0 if won else -1.0
                     stats["wins" if won else "losses"] += 1
                 else:
+                    # Truncation draw: penalize, but less than a loss.
+                    term_reward[i] = -cfg.DRAW_PENALTY
                     stats["drawn"] += 1
 
         shaped = composite_reward(obs, obs_next, dones_t)
-        buf_rewards[t] = shaped + term_reward
+        # Time cost only applies to dragged-out episodes (steps > threshold).
+        step_penalty = np.where(np.asarray(steps_since_reset) > cfg.STEP_PENALTY_START,
+                                cfg.STEP_PENALTY, 0.0)
+        buf_rewards[t] = shaped + term_reward - step_penalty
         buf_dones[t] = dones_t
         stats["reward_sum"] += float(shaped.sum())
         stats["steps"] += N
