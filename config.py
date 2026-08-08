@@ -71,9 +71,15 @@ SEED = 42
 # Self-play
 # ---------------------------------------------------------------------------
 POOL_SIZE = 10                # number of past policy snapshots kept
-SELFPLAY_PROB = 0.5           # chance an env faces a pool opponent instead of a bot
 NUM_OPPONENT_GROUPS = 8       # distinct opponents sampled per rollout (for batching)
 SAVE_TO_POOL_INTERVAL = 100   # iterations before snapshotting the current policy
+# Self-play ratio ramps from START to END over RAMP_ITERS iterations. Early
+# training keeps a high bot fraction (learn the basics); once the policy beats
+# the built-in bots, ramp toward self-play so opponents grow with it. The
+# residual bot fraction anchors against strategy drift.
+SELFPLAY_PROB_START = 0.5
+SELFPLAY_PROB_END = 0.9
+SELFPLAY_RAMP_ITERS = 2000
 
 # ---------------------------------------------------------------------------
 # Curriculum learning (map-size stages)

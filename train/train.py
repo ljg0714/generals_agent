@@ -62,14 +62,14 @@ def make_env(cfg, opponent=None) -> GeneralsEnv:
     )
 
 
-def rebuild_envs(cfg, num_envs, pool, bot_pool, seed):
+def rebuild_envs(cfg, num_envs, pool, bot_pool, seed, selfplay_prob):
     """Create fresh envs (used at start and on curriculum advance)."""
     envs = [make_env(cfg) for _ in range(num_envs)]
     opp_agents = [None] * num_envs
     rng = np.random.default_rng(seed)
     for i, env in enumerate(envs):
         env.reset(seed=seed * 10_000 + i)
-        opp_agents[i] = sample_opponent(pool, bot_pool, cfg, rng)
+        opp_agents[i] = sample_opponent(pool, bot_pool, selfplay_prob, rng)
         env.set_opponent(opp_agents[i])
     return envs, opp_agents
 
@@ -83,10 +83,17 @@ def curriculum_stage_dims(cfg, stage_idx):
 # ---------------------------------------------------------------------------
 # Opponent handling
 # ---------------------------------------------------------------------------
-def sample_opponent(pool, bot_pool, cfg, rng):
-    if len(pool) > 0 and rng.random() < cfg.SELFPLAY_PROB:
+def sample_opponent(pool, bot_pool, selfplay_prob, rng):
+    if len(pool) > 0 and rng.random() < selfplay_prob:
         return pool.sample()
     return random.choice(bot_pool)
+
+
+def selfplay_prob_at(cfg, iteration):
+    """Ramp the self-play fraction from START to END over RAMP_ITERS iters."""
+    ramp = max(cfg.SELFPLAY_RAMP_ITERS, 1)
+    frac = min(1.0, iteration / ramp)
+    return cfg.SELFPLAY_PROB_START + (cfg.SELFPLAY_PROB_END - cfg.SELFPLAY_PROB_START) * frac
 
 
 def build_groups(opp_agents):
@@ -121,7 +128,7 @@ def compute_opponent_actions(envs, groups, pad_to):
 # ---------------------------------------------------------------------------
 # Rollout
 # ---------------------------------------------------------------------------
-def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg):
+def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, selfplay_prob):
     """Collect `cfg.NUM_STEPS` steps across all envs. Returns buffers and stats."""
     N, P, T = len(envs), cfg.PAD_TO, cfg.NUM_STEPS
     rng = np.random.default_rng()
@@ -198,7 +205,7 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg):
 
         # Reset finished games with a fresh grid and a fresh opponent
         for i in np.flatnonzero(dones_t):
-            opp_agents[i] = sample_opponent(pool, bot_pool, cfg, rng)
+            opp_agents[i] = sample_opponent(pool, bot_pool, selfplay_prob, rng)
             envs[i].set_opponent(opp_agents[i])
             envs[i].reset(seed=None)
             obs_next[i] = envs[i].last_obs
@@ -323,7 +330,9 @@ def apply_args(cfg, args):
         # (cheaper visibility filters, smaller network, faster stepping).
         cfg.PAD_TO = max(cfg.PAD_TO, gmax + 2)
     if args.truncation: cfg.TRUNCATION = args.truncation
-    if args.no_selfplay: cfg.SELFPLAY_PROB = 0.0
+    if args.no_selfplay:
+        cfg.SELFPLAY_PROB_START = 0.0
+        cfg.SELFPLAY_PROB_END = 0.0
     if args.checkpoint_interval: cfg.CHECKPOINT_INTERVAL = args.checkpoint_interval
     if args.eval_interval: cfg.EVAL_INTERVAL = args.eval_interval
     if args.save_to_pool_interval: cfg.SAVE_TO_POOL_INTERVAL = args.save_to_pool_interval
@@ -402,7 +411,8 @@ def main():
     bot_pool = [RandomAgent(), ExpanderAgent(), RandomAgent(), ExpanderAgent()]
 
     # Environments
-    envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool, config.SEED)
+    envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool, config.SEED,
+                                    selfplay_prob_at(config, 0))
 
     global_step = 0
     best_eval = -1.0
@@ -410,7 +420,9 @@ def main():
 
     for iteration in range(config.NUM_ITERATIONS):
         t0 = time.time()
-        buffers, stats = collect_rollout(envs, opp_agents, network, pool, bot_pool, device, config)
+        sp_prob = selfplay_prob_at(config, iteration)
+        buffers, stats = collect_rollout(envs, opp_agents, network, pool, bot_pool, device,
+                                         config, sp_prob)
         buf_obs, buf_masks, buf_actions, buf_logprobs, buf_values, buf_rewards, buf_dones, next_values = buffers
 
         advantages = compute_gae(buf_rewards, buf_values, buf_dones, next_values,
@@ -483,7 +495,8 @@ def main():
                 if cur_stage < len(config.CURRICULUM):
                     config.MIN_GRID_DIMS, config.MAX_GRID_DIMS = curriculum_stage_dims(config, cur_stage)
                     envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool,
-                                                    config.SEED + cur_stage)
+                                                    config.SEED + cur_stage,
+                                                    selfplay_prob_at(config, iteration + 1))
                     stage_start_iter = iteration + 1
                     print(f"  [curriculum] advanced to stage {cur_stage}: "
                           f"{config.MIN_GRID_DIMS[0]}x{config.MIN_GRID_DIMS[0]}-"
