@@ -43,8 +43,17 @@ class FastGame(Game):
         # Real generals.io reveals explored cells permanently; this mask
         # restores that memory on channel 1 (generals) with no channel-count
         # change. Generals never relocate in this env, so a seen position stays
-        # valid for the whole game.
+        # valid for the whole game. The deployment harness injects the same
+        # memory into the model's input, so training and deployment stay aligned.
         self._seen_generals = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
+        # City/mountain memory: the base env's `structures_in_fog` (channel 8)
+        # multiplies the invisible mask by the GROUND-TRUTH mountains+cities
+        # mask, leaking every fogged structure (including never-explored
+        # cities) from the first step. Real generals.io hides unexplored
+        # cities in black fog and only keeps once-seen structures visible in
+        # grey fog. Track the seen subset so the policy must explore to
+        # discover cities, matching the real game's observation.
+        self._seen_structures = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
 
     def _global_game_update(self):
         owners = self.agents
@@ -59,16 +68,27 @@ class FastGame(Game):
                 self.channels.armies += update_mask * self.channels.ownership[owner]
 
     def agent_observation(self, agent):
-        """Base observation, but generals stay visible once seen (fog memory)."""
+        """Base observation plus fog memory: seen generals persist, and
+        `structures_in_fog` only shows structures that were actually seen."""
         obs = super().agent_observation(agent)
-        # `obs.generals` is the currently-visible subset (own + opponent, both
-        # in the same mask). Accumulate it and pin it back into channel 1 so a
-        # previously-discovered general remains in the observation after its
-        # cells re-fog. `Observation` is a dataclass — attribute assignment
-        # works; there is no `__setitem__`.
+        # Generals (own + opponent) stay visible once seen, even after their
+        # cells re-fog — the deployment harness injects the same memory into
+        # the model's input. `Observation` is a dataclass; attribute
+        # assignment works (there is no `__setitem__`).
         visible_generals = np.asarray(obs.generals, dtype=bool)
         self._seen_generals[agent] |= visible_generals
         obs.generals = self._seen_generals[agent]
+        # City/mountain memory: overwrite channel 8 (structures_in_fog) so it
+        # marks only fogged structures that have ever been visible (grey fog)
+        # instead of leaking the full ground-truth structure mask. Rewrite
+        # channel 7 (fog_cells) accordingly so ch7 + ch8 still partition the
+        # invisible mask. Hidden (never-seen) cities are no longer observable.
+        visible = np.asarray(self.channels.get_visibility(agent), dtype=bool)
+        structures = np.asarray(self.channels.mountains | self.channels.cities, dtype=bool)
+        self._seen_structures[agent] |= visible & structures
+        unseen = ~visible
+        obs.structures_in_fog = unseen & self._seen_structures[agent]
+        obs.fog_cells = unseen & ~self._seen_structures[agent]
         return obs
 
 
