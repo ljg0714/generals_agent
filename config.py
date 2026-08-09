@@ -124,4 +124,4 @@ DRAW_PENALTY = 0.7
 #   rushing); only dragged-out games accumulate a small time cost. Keep the
 #   magnitude small relative to the terminal +-1 and the shaped reward.
 STEP_PENALTY = 0.002
-STEP_PENALTY_START = 200
+STEP_PENALTY_START = 100
