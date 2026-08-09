@@ -46,14 +46,14 @@ class FastGame(Game):
         # valid for the whole game. The deployment harness injects the same
         # memory into the model's input, so training and deployment stay aligned.
         self._seen_generals = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
-        # City/mountain memory: the base env's `structures_in_fog` (channel 8)
-        # multiplies the invisible mask by the GROUND-TRUTH mountains+cities
-        # mask, leaking every fogged structure (including never-explored
-        # cities) from the first step. Real generals.io hides unexplored
-        # cities in black fog and only keeps once-seen structures visible in
-        # grey fog. Track the seen subset so the policy must explore to
-        # discover cities, matching the real game's observation.
-        self._seen_structures = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
+        # Structure-TYPE memory. In real generals.io the terrain layout is
+        # visible through fog (the base env already marks every fogged
+        # structure position in channel 8 — positions are known, type is not),
+        # but once a cell has been explored you remember whether it is a
+        # mountain or a city even after it re-fogs. Track the cells ever seen
+        # and pin the remembered type into channels 3/2 (mountains/cities).
+        # Unexplored structures stay type-unknown (only channel 8).
+        self._seen_cells = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
 
     def _global_game_update(self):
         owners = self.agents
@@ -69,7 +69,7 @@ class FastGame(Game):
 
     def agent_observation(self, agent):
         """Base observation plus fog memory: seen generals persist, and
-        `structures_in_fog` only shows structures that were actually seen."""
+        explored cells remember their structure type (mountain vs city)."""
         obs = super().agent_observation(agent)
         # Generals (own + opponent) stay visible once seen, even after their
         # cells re-fog — the deployment harness injects the same memory into
@@ -78,17 +78,17 @@ class FastGame(Game):
         visible_generals = np.asarray(obs.generals, dtype=bool)
         self._seen_generals[agent] |= visible_generals
         obs.generals = self._seen_generals[agent]
-        # City/mountain memory: overwrite channel 8 (structures_in_fog) so it
-        # marks only fogged structures that have ever been visible (grey fog)
-        # instead of leaking the full ground-truth structure mask. Rewrite
-        # channel 7 (fog_cells) accordingly so ch7 + ch8 still partition the
-        # invisible mask. Hidden (never-seen) cities are no longer observable.
+        # Structure-type memory: pin the remembered type of every seen cell
+        # into channels 3/2 (mountains/cities). Channel 8 (structures_in_fog)
+        # is left as the base env computes it — it keeps marking ALL fogged
+        # structure positions (known), just without the type. Making seen
+        # mountains visible in fog also lets compute_valid_move_mask block
+        # moves into them, which matches the real game.
         visible = np.asarray(self.channels.get_visibility(agent), dtype=bool)
-        structures = np.asarray(self.channels.mountains | self.channels.cities, dtype=bool)
-        self._seen_structures[agent] |= visible & structures
-        unseen = ~visible
-        obs.structures_in_fog = unseen & self._seen_structures[agent]
-        obs.fog_cells = unseen & ~self._seen_structures[agent]
+        self._seen_cells[agent] |= visible
+        seen = self._seen_cells[agent]
+        obs.cities = np.asarray(self.channels.cities, dtype=bool) & seen
+        obs.mountains = np.asarray(self.channels.mountains, dtype=bool) & seen
         return obs
 
 
