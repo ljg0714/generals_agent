@@ -101,13 +101,16 @@ CURRICULUM_EVAL_GAMES = 20
 
 # ---------------------------------------------------------------------------
 # Reward shaping (potential-based, ported from the generals-bots paper)
-# The potential combines RELATIVE (ratio) terms with ABSOLUTE (log) terms:
+# The potential is a RELATIVE-ADVANTAGE proxy:
 #   pot = RATIO_WEIGHT*(army_ratio + land_ratio)
-#       + ABS_WEIGHT*(log1p(land) + log1p(army))   # dense signal per step
-#       + CASTLE_WEIGHT*castles
-# Ratio-only potentials are ~0 while both players grow together (log(1)=0),
-# which starved learning in the 2000-iteration run. The absolute terms give
-# every captured cell / gained army a positive signal.
+#       + ABS_WEIGHT*(log1p(my_land) - log1p(opp_land)
+#                     + log1p(my_army) - log1p(opp_army))
+#       + CASTLE_WEIGHT*(castles_mine - castles_opp)
+# Pure log1p(my_*) saturates late (slope 1/x) and biases AGAINST attacking
+# (army spent in combat lowers it) while the terminal +-1 is diluted to ~0.02
+# by gamma over a long game. Subtracting the opponent's counts keeps a dense
+# gradient at every stage: a successful strike — my land/army up OR the
+# opponent's down — raises the potential, and net castles value city trades.
 # ---------------------------------------------------------------------------
 MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3

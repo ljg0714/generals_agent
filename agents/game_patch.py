@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+import numpy as np
+
 import config as _cfg
 from generals.core.game import Game
 
@@ -33,6 +35,16 @@ class FastGame(Game):
         super().__init__(grid, agents)
         self.increment_rate = _cfg.ARMY_INCREMENT_RATE
         self.city_growth_period = _cfg.CITY_GROWTH_PERIOD
+        # General positions (own + opponent) are remembered once seen, even
+        # after they re-enter fog. The env recomputes visibility every step
+        # from CURRENT owned cells (3x3 filter), so retreating re-fogs ground
+        # you explored and the opponent's general vanishes from the observation
+        # entirely — a feedforward CNN then can't recall where to strike.
+        # Real generals.io reveals explored cells permanently; this mask
+        # restores that memory on channel 1 (generals) with no channel-count
+        # change. Generals never relocate in this env, so a seen position stays
+        # valid for the whole game.
+        self._seen_generals = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
 
     def _global_game_update(self):
         owners = self.agents
@@ -45,6 +57,19 @@ class FastGame(Game):
             update_mask = self.channels.generals + self.channels.cities
             for owner in owners:
                 self.channels.armies += update_mask * self.channels.ownership[owner]
+
+    def agent_observation(self, agent):
+        """Base observation, but generals stay visible once seen (fog memory)."""
+        obs = super().agent_observation(agent)
+        # `obs.generals` is the currently-visible subset (own + opponent, both
+        # in the same mask). Accumulate it and pin it back into channel 1 so a
+        # previously-discovered general remains in the observation after its
+        # cells re-fog. `Observation` is a dataclass — attribute assignment
+        # works; there is no `__setitem__`.
+        visible_generals = np.asarray(obs.generals, dtype=bool)
+        self._seen_generals[agent] |= visible_generals
+        obs.generals = self._seen_generals[agent]
+        return obs
 
 
 def patch_env_growth():
