@@ -1,6 +1,10 @@
-"""Evaluate a trained Generals.io policy against fixed opponents."""
+"""Evaluate a trained Generals.io policy against fixed opponents.
+
+CLI: python train/eval.py --model checkpoints/latest.pt --grid-min 18 --grid-max 20
+"""
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -73,3 +77,69 @@ def evaluate(network, cfg, num_games: int = 20, opponents=None, device="cpu",
             "avg_length": float(np.mean(lengths)) if lengths else 0.0,
         }
     return results
+
+
+def _parse_dims(s: str) -> tuple[int, int]:
+    parts = [int(p) for p in s.split(",")]
+    return (parts[0], parts[0]) if len(parts) == 1 else (parts[0], parts[1])
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Evaluate a checkpoint vs built-in bots")
+    p.add_argument("--model", default="checkpoints/latest.pt")
+    p.add_argument("--grid-min", type=_parse_dims, default=None, help="min grid, e.g. 18 or 18,19")
+    p.add_argument("--grid-max", type=_parse_dims, default=None, help="max grid, e.g. 20 or 20,20")
+    p.add_argument("--games", type=int, default=20)
+    p.add_argument("--opponents", default="random,expander", help="comma-separated: random,expander")
+    p.add_argument("--greedy", action="store_true", help="greedy (deterministic) actions")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--seed", type=int, default=0)
+    args = p.parse_args()
+
+    import torch
+
+    import config
+    from agents.network import PolicyValueNetwork
+
+    if args.grid_min or args.grid_max:
+        config.MIN_GRID_DIMS = args.grid_min or args.grid_max
+        config.MAX_GRID_DIMS = args.grid_max or args.grid_min
+
+    net = PolicyValueNetwork(
+        input_channels=config.INPUT_CHANNELS,
+        hidden_channels=config.HIDDEN_CHANNELS,
+        grid_size=config.PAD_TO,
+        value_hidden=config.VALUE_HIDDEN,
+    )
+    state = torch.load(args.model, map_location="cpu")
+    if isinstance(state, dict) and "model_state" in state:
+        state = state["model_state"]
+    net.load_state_dict(state)
+
+    from generals.agents.expander_agent import ExpanderAgent
+    from generals.agents.random_agent import RandomAgent
+
+    opponents = []
+    for name in args.opponents.split(","):
+        name = name.strip()
+        if name == "random":
+            opponents.append(RandomAgent())
+        elif name == "expander":
+            opponents.append(ExpanderAgent())
+        else:
+            raise ValueError(f"unknown opponent: {name}")
+
+    print(f"grid {config.MIN_GRID_DIMS}-{config.MAX_GRID_DIMS} | games={args.games} | "
+          f"{'greedy' if args.greedy else 'sampling'}")
+    res = evaluate(
+        net, config, num_games=args.games, opponents=opponents,
+        device=args.device, greedy=args.greedy, seed=args.seed,
+    )
+    for k, v in res.items():
+        total = v["wins"] + v["losses"] + v["draws"]
+        print(f"{k}: win_rate={v['win_rate']:.3f} ({v['wins']}/{total}) "
+              f"draws={v['draws']} avg_len={v['avg_length']:.0f}")
+
+
+if __name__ == "__main__":
+    main()
