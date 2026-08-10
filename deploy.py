@@ -21,12 +21,41 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import numpy as np
 import torch
 
 import config
 from agents.deploy_agent import DeployPPOAgent
 from agents.network import PolicyValueNetwork
+from generals.core.config import Direction
 from generals.remote import GeneralsIOClient
+
+DIRECTIONS = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
+
+
+class SafeGeneralsIOClient(GeneralsIOClient):
+    """Client whose source/destination index math is done in int64.
+
+    The library's `Action` is a np.int8 ndarray; `_generate_action` computes
+    `row * map_width` in int8, which OVERFLOWS once row * width > 127 (e.g.
+    row 7 on a 19-wide map). The wrong source index is silently rejected by the
+    server, so the bot stalls on one cell. Recompute in int64.
+    """
+
+    def _generate_action(self, observation):
+        action = self.agent.act(observation)
+        pass_or_play = int(action[0])
+        if pass_or_play:
+            return None
+        i, j = int(action[1]), int(action[2])
+        direction = int(action[3])
+        split = int(action[4])
+        source = np.array([i, j], dtype=np.int64)
+        destination = source + np.array(DIRECTIONS[direction].value, dtype=np.int64)
+        width = int(self.game_state.map[0])
+        source_index = int(source[0]) * width + int(source[1])
+        destination_index = int(destination[0]) * width + int(destination[1])
+        return (source_index, destination_index, split)
 
 
 def load_agent(model_path: str, device: str, verbose: bool = False) -> DeployPPOAgent:
@@ -63,7 +92,7 @@ def main() -> None:
     agent = load_agent(args.model, args.device, verbose=args.verbose)
     print(f"Loaded {args.model} -> DeployPPOAgent (pad_to={config.PAD_TO}, greedy, fog-memory injection)")
 
-    with GeneralsIOClient(agent, args.user_id, public_server=args.public) as client:
+    with SafeGeneralsIOClient(agent, args.user_id, public_server=args.public) as client:
         if args.bot_key:
             client.bot_key = args.bot_key
         if args.username:
