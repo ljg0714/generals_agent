@@ -73,6 +73,8 @@ class SafeGeneralsIOClient(GeneralsIOClient):
                 print(f"[join_1v1] SERVER ERROR ({event}): {data}")
                 self._status = "off"
                 return
+            if event in ("pre_game_start",):
+                continue  # normal generals.io event preceding game_start
             print(f"[join_1v1] unexpected event: {event} data={data}")
 
 
