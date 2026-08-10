@@ -57,6 +57,24 @@ class SafeGeneralsIOClient(GeneralsIOClient):
         destination_index = int(destination[0]) * width + int(destination[1])
         return (source_index, destination_index, split)
 
+    def join_1v1_queue(self):
+        """Join 1v1 queue, surfacing server errors instead of hanging."""
+        self._status = "queue"
+        print("Joining 1v1 queue...")
+        self.emit("join_1v1", (self.user_id, self.bot_key))
+        while True:
+            event, *data = self.receive()
+            if event == "game_start":
+                self._status = "game"
+                self._initialize_game(data)
+                self._play_game()
+                break
+            if event == "error":
+                print(f"[join_1v1] SERVER ERROR: {data}")
+                self._status = "off"
+                return
+            print(f"[join_1v1] unexpected event: {event}")
+
 
 def load_agent(model_path: str, device: str, verbose: bool = False) -> DeployPPOAgent:
     network = PolicyValueNetwork(
@@ -88,6 +106,8 @@ def main() -> None:
 
     if not args.lobby and not args.one_v1:
         p.error("provide --lobby <id> or --one-v1")
+    if args.one_v1 and not args.public:
+        p.error("--one-v1 requires --public: the 1v1 queue is on the public server (ws.generals.io)")
 
     agent = load_agent(args.model, args.device, verbose=args.verbose)
     print(f"Loaded {args.model} -> DeployPPOAgent (pad_to={config.PAD_TO}, greedy, fog-memory injection)")
@@ -98,8 +118,13 @@ def main() -> None:
         if args.username:
             try:
                 client.register_agent(args.username)
+                print("Registration OK.")
             except ValueError as e:
-                print(f"register_agent failed (continuing anyway): {e}")
+                print(f"register_agent FAILED: {e}")
+                if args.one_v1:
+                    print("The public 1v1 queue requires a registered username. Check --bot-key "
+                          "(you may need your own bot key from generals.io account settings).")
+                    return
 
         games = 0
         while args.num_games == 0 or games < args.num_games:
