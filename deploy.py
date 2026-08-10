@@ -69,11 +69,11 @@ class SafeGeneralsIOClient(GeneralsIOClient):
                 self._initialize_game(data)
                 self._play_game()
                 break
-            if event == "error":
-                print(f"[join_1v1] SERVER ERROR: {data}")
+            if event in ("error", "gio_error"):
+                print(f"[join_1v1] SERVER ERROR ({event}): {data}")
                 self._status = "off"
                 return
-            print(f"[join_1v1] unexpected event: {event}")
+            print(f"[join_1v1] unexpected event: {event} data={data}")
 
 
 def load_agent(model_path: str, device: str, verbose: bool = False) -> DeployPPOAgent:
