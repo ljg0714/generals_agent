@@ -65,11 +65,8 @@ tensorboard --logdir runs
 ## 评估与观看
 
 ```bash
-# 对内置 bot 的胜率评估
-python -c "import torch, config; from agents.network import PolicyValueNetwork; from train.eval import evaluate; \
-net = PolicyValueNetwork(config.INPUT_CHANNELS, config.HIDDEN_CHANNELS, config.PAD_TO, config.VALUE_HIDDEN); \
-net.load_state_dict(torch.load('checkpoints/latest.pt', map_location='cpu')['model_state']); \
-print(evaluate(net, config, num_games=20, device='cpu'))"
+# 对内置 bot 的胜率评估（--grid-min/max 可指定地图尺寸，如对齐真实 1v1 的 18-20）
+python train/eval.py --model checkpoints/latest.pt --grid-min 18 --grid-max 20 --games 30 --greedy
 
 # GUI 观看 agent 对战 bot
 python play.py --model checkpoints/latest.pt --opponent expander
