@@ -107,11 +107,29 @@ verify_env.py           # 环境冒烟测试
 
 ```
 agents/game_patch.py       # FastGame：增长对齐真实 generals.io（monkeypatch 注入 env）
+agents/deploy_agent.py     # 部署包装：把王城/地形类型迷雾记忆注入真实游戏 observation
 train/generate_data.py     # 规则 bot 自对弈生成行为克隆数据集 (.npz)
 train/pretrain.py          # 监督预训练策略（--init-from-pretrained 接入 train.py）
+deploy.py                  # 部署到真实 generals.io 服务器（私有房 / 1v1 排位）
 ```
+
+## 部署到真实 generals.io
+
+训练好的策略可部署到真实服务器对战真人。**关键**：模型是在带迷雾记忆（王城 + 地形类型）的观察量上训练的，而真实游戏观察量没有这两类记忆——`DeployPPOAgent` 在运行时把它们重新注入，保证训练/部署输入一致。
+
+```bash
+# 需要 generals.io 账号的 user_id（账户设置里的密钥，保密）
+# 私有房间（bot 服务器，强制开局，适合先测试）
+python deploy.py --user-id <SECRET> --lobby <房间号> --username "[Bot] PPOBot"
+
+# 公开 1v1 排位
+python deploy.py --user-id <SECRET> --one-v1 --public --username "[Bot] PPOBot"
+
+# 其它选项：--model 换模型、--device cuda、--num-games N 限局数
+```
+
+限制：网络按 24×24 填充输入训练（`PAD_TO=24`），地图须 ≤ 24×24；generals.io 1v1 标准图在范围内。
 
 ## 后续路线
 
 - numpy 环境训练收敛慢时可迁移到 generals-bots 的 [JAX 版](https://github.com/strakam/generals-bots)（快 100 倍以上）
-- 训练出强 agent 后可用 `generals.remote.generalsio_client` 的 autopilot 部署到 generals.io 真实服务器对战真人
