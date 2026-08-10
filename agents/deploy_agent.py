@@ -27,9 +27,10 @@ from agents.ppo_agent import PPOAgent
 
 
 class DeployPPOAgent(PPOAgent):
-    def __init__(self, network, device="cpu", pad_to: int = 24):
+    def __init__(self, network, device="cpu", pad_to: int = 24, verbose: bool = False):
         super().__init__(network, device=device, pad_to=pad_to, greedy=True)
         self._memory = None
+        self.verbose = verbose
 
     def reset(self):
         """Called between episodes by callers that manage lifecycle."""
@@ -37,11 +38,26 @@ class DeployPPOAgent(PPOAgent):
 
     def act(self, observation):
         """observation: a live generals.io Observation (raw map size)."""
-        obs = self._with_memory(observation)
-        # Pad BEFORE the base act() so compute_valid_move_mask sees the padded
-        # grid and stays aligned with the padded network input.
-        obs.pad_observation(self.pad_to)
-        return super().act(obs)
+        try:
+            raw_shape = observation.armies.shape  # before in-place padding
+            obs = self._with_memory(observation)
+            # Pad BEFORE the base act() so compute_valid_move_mask sees the
+            # padded grid and stays aligned with the padded network input.
+            obs.pad_observation(self.pad_to)
+            action = super().act(obs)
+        except Exception:
+            # Never let one bad observation kill the game loop; log it.
+            import traceback
+            traceback.print_exc()
+            from generals.core.action import Action
+            action = Action(1, 0, 0, 0, 0)  # pass
+        if self.verbose:
+            h, w = raw_shape
+            owned = int(np.asarray(observation.owned_cells, bool).sum())
+            pass_or_play = bool(action[0])
+            print(f"  [turn {observation.timestep}] map {w}x{h} owned={owned} "
+                  f"action={'PASS' if pass_or_play else list(map(int, action[1:]))}")
+        return action
 
     def _with_memory(self, obs):
         h, w = obs.armies.shape

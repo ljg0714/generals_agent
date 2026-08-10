@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,7 +29,7 @@ from agents.network import PolicyValueNetwork
 from generals.remote import GeneralsIOClient
 
 
-def load_agent(model_path: str, device: str) -> DeployPPOAgent:
+def load_agent(model_path: str, device: str, verbose: bool = False) -> DeployPPOAgent:
     network = PolicyValueNetwork(
         input_channels=config.INPUT_CHANNELS,
         hidden_channels=config.HIDDEN_CHANNELS,
@@ -39,7 +40,7 @@ def load_agent(model_path: str, device: str) -> DeployPPOAgent:
     if isinstance(state, dict) and "model_state" in state:
         state = state["model_state"]
     network.load_state_dict(state)
-    return DeployPPOAgent(network, device=device, pad_to=config.PAD_TO)
+    return DeployPPOAgent(network, device=device, pad_to=config.PAD_TO, verbose=verbose)
 
 
 def main() -> None:
@@ -53,12 +54,13 @@ def main() -> None:
     p.add_argument("--public", action="store_true", help="connect to the public server (ws.generals.io) instead of the bot server")
     p.add_argument("--device", default="cpu")
     p.add_argument("--num-games", type=int, default=0, help="stop after N games (0 = play forever)")
+    p.add_argument("--verbose", action="store_true", help="log every turn: map size, owned cells, chosen action")
     args = p.parse_args()
 
     if not args.lobby and not args.one_v1:
         p.error("provide --lobby <id> or --one-v1")
 
-    agent = load_agent(args.model, args.device)
+    agent = load_agent(args.model, args.device, verbose=args.verbose)
     print(f"Loaded {args.model} -> DeployPPOAgent (pad_to={config.PAD_TO}, greedy, fog-memory injection)")
 
     with GeneralsIOClient(agent, args.user_id, public_server=args.public) as client:
@@ -72,15 +74,23 @@ def main() -> None:
 
         games = 0
         while args.num_games == 0 or games < args.num_games:
-            if args.one_v1:
-                client.join_1v1_queue()
-                games += 1
-            else:
-                if client.status == "off":
-                    client.join_private_lobby(args.lobby)
-                elif client.status == "lobby":
-                    client.join_game()
+            try:
+                if args.one_v1:
+                    client.join_1v1_queue()
                     games += 1
+                else:
+                    if client.status == "off":
+                        client.join_private_lobby(args.lobby)
+                    elif client.status == "lobby":
+                        client.join_game()
+                        games += 1
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"game loop error, reconnecting... (games played={games})")
+                time.sleep(2)
 
 
 if __name__ == "__main__":
