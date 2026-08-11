@@ -47,7 +47,10 @@ VALUE_HIDDEN = 64
 # PPO hyperparameters
 # ---------------------------------------------------------------------------
 LEARNING_RATE = 3e-4
-GAMMA = 0.99
+# 0.995 (was 0.99): games on big maps run 600+ steps, and 0.99^600 ≈ 0.002
+# diluted the terminal win/loss to nothing before the early "attack or expand"
+# decisions. 0.995^600 ≈ 0.05 keeps a usable signal at that horizon.
+GAMMA = 0.995
 GAE_LAMBDA = 0.95
 CLIP_EPS = 0.2
 VF_COEF = 0.5
@@ -116,15 +119,23 @@ MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3
 RATIO_WEIGHT = 0.2
 ABS_WEIGHT = 0.1
+# Opponent-decline terms are weighted 2x the own-growth terms, so REDUCING the
+# opponent (attacks, taking their land) pays more than endlessly expanding into
+# neutral ground. On big maps the own-growth terms reward expansion forever,
+# which stalls the game; the higher opp weight tilts the policy toward striking.
+ABS_OPP_WEIGHT = 0.2
 CASTLE_WEIGHT = 0.5
 
 # Time-dependent terms — encourage attacking efficiency / shorter games.
 # DRAW_PENALTY: reward for a truncation draw. Smaller than a loss (-1) so a
 #   draw is bad but not as bad as losing.
 DRAW_PENALTY = 0.7
-# STEP_PENALTY: subtracted per step ONLY once an episode exceeds
-#   STEP_PENALTY_START steps. Short games are unpenalized (no premature
-#   rushing); only dragged-out games accumulate a small time cost. Keep the
-#   magnitude small relative to the terminal +-1 and the shaped reward.
+# STEP_PENALTY: subtracted per step once an episode exceeds STEP_PENALTY_START
+#   steps, and it GROWS every STEP_PENALTY_INTERVAL further steps by
+#   STEP_PENALTY_INCREMENT — so a game that drags on gets increasingly
+#   expensive, forcing the policy to finish instead of turtling. Short games
+#   are unpenalized (no premature rushing).
 STEP_PENALTY = 0.002
 STEP_PENALTY_START = 100
+STEP_PENALTY_INCREMENT = 0.002   # added per STEP_PENALTY_INTERVAL steps past the start
+STEP_PENALTY_INTERVAL = 200

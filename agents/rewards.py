@@ -34,6 +34,11 @@ MAX_ARMY_RATIO = 1.6
 MAX_LAND_RATIO = 1.3
 RATIO_WEIGHT = 0.2
 ABS_WEIGHT = 0.1
+# Opponent-decline terms are weighted 2x the own-growth terms, so reducing the
+# opponent (attacks, taking their land) pays more than endlessly expanding into
+# neutral ground — on big maps the own-growth terms reward expansion forever,
+# which stalls the game. Keep in sync with config.ABS_OPP_WEIGHT.
+ABS_OPP_WEIGHT = 0.2
 CASTLE_WEIGHT = 0.4
 
 
@@ -78,9 +83,11 @@ def potentials(obs_batch: np.ndarray) -> np.ndarray:
     in the endgame.
     """
     ratio = RATIO_WEIGHT * (army_ratio_potential(obs_batch) + land_ratio_potential(obs_batch))
-    absolute = ABS_WEIGHT * (
-        np.log1p(obs_batch[:, 9, 0, 0]) - np.log1p(obs_batch[:, 11, 0, 0])
-        + np.log1p(obs_batch[:, 10, 0, 0]) - np.log1p(obs_batch[:, 12, 0, 0])
+    # Own growth and opponent decline use separate weights; ABS_OPP_WEIGHT is
+    # higher so hurting the opponent pays more than expanding.
+    absolute = (
+        ABS_WEIGHT * (np.log1p(obs_batch[:, 9, 0, 0]) + np.log1p(obs_batch[:, 10, 0, 0]))
+        - ABS_OPP_WEIGHT * (np.log1p(obs_batch[:, 11, 0, 0]) + np.log1p(obs_batch[:, 12, 0, 0]))
     )
     castles = CASTLE_WEIGHT * (castles_owned(obs_batch) - castles_owned_opp(obs_batch))
     return ratio + absolute + castles

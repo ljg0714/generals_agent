@@ -195,9 +195,16 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, self
                     stats["drawn"] += 1
 
         shaped = composite_reward(obs, obs_next, dones_t)
-        # Time cost only applies to dragged-out episodes (steps > threshold).
-        step_penalty = np.where(np.asarray(steps_since_reset) > cfg.STEP_PENALTY_START,
-                                cfg.STEP_PENALTY, 0.0)
+        # Time cost only applies to dragged-out episodes (steps > threshold),
+        # and ramps up every STEP_PENALTY_INTERVAL further steps so an endless
+        # turtle becomes increasingly expensive instead of a flat small tax.
+        steps = np.asarray(steps_since_reset)
+        over = np.maximum(steps - cfg.STEP_PENALTY_START, 0)
+        step_penalty = np.where(
+            steps > cfg.STEP_PENALTY_START,
+            cfg.STEP_PENALTY + cfg.STEP_PENALTY_INCREMENT * (over // cfg.STEP_PENALTY_INTERVAL),
+            0.0,
+        )
         buf_rewards[t] = shaped + term_reward - step_penalty
         buf_dones[t] = dones_t
         stats["reward_sum"] += float(shaped.sum())
