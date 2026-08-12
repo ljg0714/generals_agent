@@ -2037,6 +2037,23 @@ class OrToolsFlowDirectionFinder(FlowDirectionFinderABC):
         enemy_general = self._enemy_general
         if enemy_general is None:
             raise Exception("Enemy general is None")
+        # The (predicted/remembered) enemy general may be behind fog and thus not
+        # in the island lookup (our gymnasium env re-fogs explored tiles, unlike
+        # generals.io which reveals them permanently). Fall back to a sample tile
+        # of the nearest islanded enemy island so the flow can still attack enemy
+        # territory instead of crashing on a None island.
+        if islands.tile_island_lookup.raw[enemy_general.tile_index] is None:
+            best, best_dist = None, None
+            eg_x, eg_y = enemy_general.x, enemy_general.y
+            for cand in islands.all_tile_islands:
+                if cand.team == self.target_team and cand.tile_set:
+                    s = next(iter(cand.tile_set))
+                    d = (s.x - eg_x) ** 2 + (s.y - eg_y) ** 2
+                    if best is None or d < best_dist:
+                        best, best_dist = s, d
+            if best is None:
+                raise Exception("Enemy general is None")
+            enemy_general = best
 
         builder = DirectOrToolsGraphBuilder()
         builder.log_debug = self.log_debug

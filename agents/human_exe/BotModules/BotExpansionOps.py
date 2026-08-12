@@ -232,9 +232,11 @@ class BotExpansionOps:
                 countNone += 1
 
             if bot._map.turn == bot.city_expand_plan.launch_turn:
-                while bot.city_expand_plan.plan_paths[0] is None:
+                while bot.city_expand_plan.plan_paths and bot.city_expand_plan.plan_paths[0] is None:
                     bot.viewInfo.add_info_line(f'POPPING BAD EARLY DELAY OFF OF THE PLAN...?')
                     bot.city_expand_plan.plan_paths.pop(0)
+            if not bot.city_expand_plan.plan_paths:
+                return None
             curPath = bot.city_expand_plan.plan_paths[0]
             if curPath is None:
                 bot.info(

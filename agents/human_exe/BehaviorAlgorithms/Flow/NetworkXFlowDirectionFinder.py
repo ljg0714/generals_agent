@@ -134,6 +134,21 @@ class NetworkXFlowDirectionFinder(FlowDirectionFinderABC):
         if self.enemy_general is None or self.map.is_player_on_team(self.enemy_general.player, myTeam):
             raise Exception(f'Cannot call ensure_flow_graph_exists without setting enemyGeneral to some (enemy) tile.')
         targetGeneralIsland = islands.tile_island_lookup.raw[self.enemy_general.tile_index]
+        if targetGeneralIsland is None:
+            # The (predicted/remembered) enemy general may be behind fog and not in the
+            # island lookup (our gymnasium env re-fogs explored tiles, unlike generals.io).
+            # Fall back to the islanded enemy island nearest the predicted general.
+            best, best_dist = None, None
+            eg_x, eg_y = self.enemy_general.x, self.enemy_general.y
+            for cand in islands.all_tile_islands:
+                if cand.team == self.target_team and cand.tile_set:
+                    s = next(iter(cand.tile_set))
+                    d = (s.x - eg_x) ** 2 + (s.y - eg_y) ** 2
+                    if best is None or d < best_dist:
+                        best, best_dist = s, d
+            if best is not None:
+                self.enemy_general = best
+                targetGeneralIsland = islands.tile_island_lookup.raw[best.tile_index]
         frGeneralIsland = islands.tile_island_lookup.raw[self.friendly_general.tile_index]
 
         cumulativeDemand, demands, friendlyArmySupply, enemyArmyDemand, enemyGeneralDemand = self._determine_initial_demands_and_split_input_output_nodes(graph, islands, ourSet, targetSet, use_neutral_flow)

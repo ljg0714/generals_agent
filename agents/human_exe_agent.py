@@ -133,9 +133,10 @@ class HumanExeAgent:
     observation), so call sites special-case it.
     """
 
-    def __init__(self, player_id: str = "agent_1", pad_to: int = 24):
+    def __init__(self, player_id: str = "agent_1", pad_to: int = 24, max_tracebacks: int = 3):
         self.player_id = player_id
         self.pad_to = pad_to
+        self.max_tracebacks = max_tracebacks
         self.bot = EklipZBot()
         self.bot.no_file_logging = True
         self._player_map: MapBase | None = None
@@ -178,7 +179,7 @@ class HumanExeAgent:
             # The EklipZ bot has known latent bugs; a failed turn must degrade to a
             # pass rather than crash the game. Print only the first few tracebacks
             # (for diagnosis) so a long run isn't flooded with identical errors.
-            if getattr(self, "_error_count", 0) < 3:
+            if getattr(self, "_error_count", 0) < self.max_tracebacks:
                 import traceback
                 traceback.print_exc()
             self._error_count = getattr(self, "_error_count", 0) + 1
