@@ -60,6 +60,12 @@ def _is_valid_action(action, mask) -> bool:
     return bool(mask[r, c, d])
 
 
+def _save(out: str, obs, masks, actions, pad_to: int, n: int) -> None:
+    """Write a (possibly partial) dataset checkpoint to `out`."""
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out, obs=obs[:n], masks=masks[:n], actions=actions[:n], pad_to=pad_to)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out", default="checkpoints/dataset.npz")
@@ -71,6 +77,8 @@ def main():
     p.add_argument("--truncation", type=int, default=None)
     p.add_argument("--demonstrator", type=str, default="expander",
                    choices=["expander", "human_exe"])
+    p.add_argument("--save-every", type=int, default=10,
+                   help="save a checkpoint every N games (crash-safe; default 10)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
@@ -145,10 +153,13 @@ def main():
             rate = n / max(dt, 1e-6)
             print(f"[{args.demonstrator}] game {g + 1}/{args.games}: {n} samples "
                   f"({dt:.0f}s, {rate:.1f} samples/s)")
+        # Crash-safe checkpoint: overwrite --out every `--save-every` games so a crash
+        # only loses the last few games instead of the whole run.
+        if (g + 1) % args.save_every == 0:
+            _save(args.out, obs_arr, mask_arr, act_arr, P, n)
+            print(f"  checkpoint saved ({n} samples so far) -> {args.out}")
 
-    obs_arr, mask_arr, act_arr = obs_arr[:n], mask_arr[:n], act_arr[:n]
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.out, obs=obs_arr, masks=mask_arr, actions=act_arr, pad_to=P)
+    _save(args.out, obs_arr, mask_arr, act_arr, P, n)
     print(f"Saved {n} samples to {args.out} in {time.time() - t0:.1f}s")
 
 
