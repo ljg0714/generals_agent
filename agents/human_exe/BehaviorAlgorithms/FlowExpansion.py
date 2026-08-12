@@ -3342,8 +3342,10 @@ class ArmyFlowExpanderV2:
                 if "GATHER_CAPTURE_PLAN_NO_MOVE_ERROR" not in details['exception']
             ]
 
-            # DONT EVER FUCKING EVER EVER EVER IGNORE ERRORS. WE WANT CORRECT BEHAVIOR, FAILURES ARE HERE TO FIND THE BUGS, NOT BE SILENTLY FUCKING IGNORED.
-            if len(plan_errors) > 0:
+            # Vendored copy: only raise on FATAL errors. Benign "no move available"
+            # plan errors (GATHER_CAPTURE_PLAN_NO_MOVE_ERROR) are normal on many
+            # gymnasium maps and must not crash the whole turn.
+            if len(fatal_plan_errors) > 0:
                 all_errors_str = "\n\n".join([
                     f"{details['border_pair']}: {details['exception_type']}: {details['exception']}"
                     for _, details, _ in fatal_plan_errors

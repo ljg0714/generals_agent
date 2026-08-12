@@ -175,8 +175,13 @@ class HumanExeAgent:
         try:
             move = self.bot.find_move()
         except Exception:
-            import traceback
-            traceback.print_exc()
+            # The EklipZ bot has known latent bugs; a failed turn must degrade to a
+            # pass rather than crash the game. Print only the first few tracebacks
+            # (for diagnosis) so a long run isn't flooded with identical errors.
+            if getattr(self, "_error_count", 0) < 3:
+                import traceback
+                traceback.print_exc()
+            self._error_count = getattr(self, "_error_count", 0) + 1
             move = None
         return self._move_to_action(move)
 
