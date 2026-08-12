@@ -138,8 +138,13 @@ def main():
         if n >= max_samples:
             print("Reached max_samples; stopping early.")
             break
-        if (g + 1) % 20 == 0:
-            print(f"game {g + 1}: {n} samples ({time.time() - t0:.0f}s)")
+        # Show per-game progress (human_exe runs ~1-2 min/game; every 20 games for the
+        # fast expander demonstrator).
+        if (g + 1) % 20 == 0 or args.demonstrator == "human_exe":
+            dt = time.time() - t0
+            rate = n / max(dt, 1e-6)
+            print(f"[{args.demonstrator}] game {g + 1}/{args.games}: {n} samples "
+                  f"({dt:.0f}s, {rate:.1f} samples/s)")
 
     obs_arr, mask_arr, act_arr = obs_arr[:n], mask_arr[:n], act_arr[:n]
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

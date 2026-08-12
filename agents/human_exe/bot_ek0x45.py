@@ -512,7 +512,11 @@ class EklipZBot(object):
 
             self._map.last_player_index_submitted_move = None
             if move is not None and move.source.player != self.general.player:
-                raise AssertionError(f'select_move just returned {move} moving from a tile we didn\'t own...')
+                # Vendored copy: our gymnasium env re-fogs explored tiles (generals.io
+                # reveals them permanently), so the bot can briefly select a tile it no
+                # longer owns. Degrade to a pass instead of raising.
+                self.info(f'select_move returned a move from a tile we don\'t own: {move}; skipping')
+                move = None
             if move is not None:
                 self._map.last_player_index_submitted_move = (move.source, move.dest, move.move_half)
         except Exception as ex:

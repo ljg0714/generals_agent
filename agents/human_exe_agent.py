@@ -189,6 +189,7 @@ class HumanExeAgent:
     def _sync_player_map(self, game, map_raw: MapBase, agent_id: str):
         """Fog-correct in-place update of the bot's player map from game truth."""
         player_map = self._player_map
+        player_index = game.agents.index(agent_id)
         rows, cols = player_map.rows, player_map.cols
         visible = np.asarray(game.channels.get_visibility(agent_id), dtype=bool)
         for y in range(rows):
@@ -209,6 +210,11 @@ class HumanExeAgent:
                         player_map.players[real.player].general = pt
                 else:
                     pt.visible = False
+                    # generals.io keeps owned territory visible; a tile behind fog is
+                    # never ours. A previously-owned tile that was captured and re-fogged
+                    # must not stay movable (else the bot moves from a tile it doesn't own).
+                    if pt.player == player_index:
+                        pt.player = -1
                     if not pt.discovered:
                         # Undiscovered fog: plain fog, no remembered structure.
                         pt.army = 0
