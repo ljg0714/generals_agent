@@ -78,13 +78,17 @@ class GatherTreeNode(typing.Generic[T]):
             child.toGather = self
 
     def deep_clone(self, dupeAssertionCache=None):
+        # Vendored copy: the cycle cache was keyed by tile but never cleaned up, so a
+        # legitimate gather tree whose SAME source tile appears in two sibling branches
+        # was misreported as a cycle. Track the CURRENT recursion path instead (add on
+        # entry, discard on exit) so only a true ancestor cycle raises.
         if dupeAssertionCache is None:
-            dupeAssertionCache = {}
+            dupeAssertionCache = set()
 
         if self.tile in dupeAssertionCache:
             raise Exception(f'{self.tile} was part of a cycle in GatherTreeNode deep clone... toTile {self.toTile}, self.children {" | ".join([str(c.tile) for c in self.children])}')
 
-        dupeAssertionCache[self.tile] = self.tile
+        dupeAssertionCache.add(self.tile)
 
         newNode = GatherTreeNode(self.tile, self.toTile, self.stateObj)
         newNode.value = self.value
@@ -92,6 +96,7 @@ class GatherTreeNode(typing.Generic[T]):
         newNode.gatherTurns = self.gatherTurns
         newNode.trunkDistance = self.trunkDistance
         newNode.children = [node.deep_clone(dupeAssertionCache) for node in self.children]
+        dupeAssertionCache.discard(self.tile)
         for child in newNode.children:
             child.toGather = newNode
         # newNode.pruned = [node.deep_clone(dupeAssertionCache) for node in self.pruned]
