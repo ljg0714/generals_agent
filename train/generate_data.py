@@ -60,10 +60,11 @@ def _is_valid_action(action, mask) -> bool:
     return bool(mask[r, c, d])
 
 
-def _save(out: str, obs, masks, actions, pad_to: int, n: int) -> None:
+def _save(out: str, obs, masks, actions, pad_to: int, n: int, games: int) -> None:
     """Write a (possibly partial) dataset checkpoint to `out`."""
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out, obs=obs[:n], masks=masks[:n], actions=actions[:n], pad_to=pad_to)
+    np.savez_compressed(out, obs=obs[:n], masks=masks[:n], actions=actions[:n],
+                        pad_to=pad_to, games=games)
 
 
 def main():
@@ -79,6 +80,10 @@ def main():
                    choices=["expander", "human_exe"])
     p.add_argument("--save-every", type=int, default=10,
                    help="save a checkpoint every N games (crash-safe; default 10)")
+    p.add_argument("--resume", action="store_true",
+                   help="resume from an existing --out checkpoint (append more games)")
+    p.add_argument("--start-game", type=int, default=None,
+                   help="override the checkpoint's completed-game count when resuming")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
@@ -103,8 +108,37 @@ def main():
     augmenter = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
 
     n = 0
+    games_started = 0
+    if args.resume:
+        if not Path(args.out).exists():
+            sys.exit(f"--resume requested but {args.out} does not exist")
+        prev = np.load(args.out)
+        prev_n = int(len(prev["obs"]))
+        if prev_n >= max_samples:
+            print(f"Checkpoint already has {prev_n} samples (>= --max-samples "
+                  f"{max_samples}); nothing to add.")
+            return
+        if int(prev["pad_to"]) != P:
+            sys.exit(f"checkpoint pad_to={int(prev['pad_to'])} != --pad-to {P}")
+        if prev["obs"].shape[1] != config.INPUT_CHANNELS:
+            sys.exit(f"checkpoint channels={prev['obs'].shape[1]} != "
+                     f"INPUT_CHANNELS={config.INPUT_CHANNELS}")
+        obs_arr[:prev_n] = prev["obs"]
+        mask_arr[:prev_n] = prev["masks"]
+        act_arr[:prev_n] = prev["actions"]
+        n = prev_n
+        games_started = int(prev["games"]) if "games" in prev.files else 0
+        if args.start_game is not None:
+            games_started = args.start_game
+        if games_started >= args.games:
+            print(f"Checkpoint already has {games_started} games (>= --games {args.games}); "
+                  f"nothing to do.")
+            return
+        print(f"Resuming from {args.out}: {n} samples, {games_started}/{args.games} games done")
+
+    games_done = games_started
     t0 = time.time()
-    for g in range(args.games):
+    for g in range(games_started, args.games):
         # Fresh stateful demonstrator per game.
         if args.demonstrator == "human_exe":
             from agents.human_exe_agent import HumanExeAgent
@@ -143,6 +177,7 @@ def main():
             if game.is_done() or n >= max_samples:
                 break
 
+        games_done = g + 1
         if n >= max_samples:
             print("Reached max_samples; stopping early.")
             break
@@ -156,10 +191,10 @@ def main():
         # Crash-safe checkpoint: overwrite --out every `--save-every` games so a crash
         # only loses the last few games instead of the whole run.
         if (g + 1) % args.save_every == 0:
-            _save(args.out, obs_arr, mask_arr, act_arr, P, n)
+            _save(args.out, obs_arr, mask_arr, act_arr, P, n, g + 1)
             print(f"  checkpoint saved ({n} samples so far) -> {args.out}")
 
-    _save(args.out, obs_arr, mask_arr, act_arr, P, n)
+    _save(args.out, obs_arr, mask_arr, act_arr, P, n, games_done)
     print(f"Saved {n} samples to {args.out} in {time.time() - t0:.1f}s")
 
 
