@@ -1,6 +1,9 @@
 """PyTorch policy-value network for Generals.io (CleanRL-style PPO).
 
-Input:  (B, 15, H, W) padded observation tensor + (B, H, W, 4) valid-move mask.
+Input:  (B, 31, H, W) memory-augmented observation tensor + (B, H, W, 4) valid-move
+        mask. The 31 channels are produced from the raw 15-channel obs by
+        `MemoryAugmenter` (see `agents/memory_aug.py`); `forward` is stateless on
+        the augmented tensor and applies the paper's per-channel normalization.
 Output: policy logits over 9*H*W actions, and a scalar state value.
 
 Action encoding (matches generals-bots):
@@ -15,16 +18,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import config
+from agents.memory_aug import MemoryAugmenter
+
 
 class PolicyValueNetwork(nn.Module):
     def __init__(
         self,
-        input_channels: int = 15,
+        input_channels: int | None = None,
         hidden_channels: tuple[int, ...] = (32, 32, 32, 16),
         grid_size: int = 24,
         value_hidden: int = 64,
     ):
         super().__init__()
+        if input_channels is None:
+            input_channels = config.INPUT_CHANNELS
         c0, c1, c2, c3 = hidden_channels
         self.grid_size = grid_size
 
@@ -46,13 +54,30 @@ class PolicyValueNetwork(nn.Module):
             nn.Linear(value_hidden, 1),
         )
 
+        # In-network memory augmentation (paper arXiv:2507.06825). Memory is a plain
+        # dict inside this module, used only by the learner's rollout path; eval and
+        # self-play opponent agents keep their own per-env memory instead (see
+        # `agents/ppo_agent.py`), so the learner's batch-N state is never reallocated.
+        self.augmenter = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
+
+    def augment_observation(self, obs: torch.Tensor) -> torch.Tensor:
+        """Fold a raw (B, 15, H, W) observation into the (B, 31, H, W) input tensor."""
+        return self.augmenter.augment_observation(obs)
+
     def forward(self, obs: torch.Tensor, valid_moves: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns (policy_logits (B, 9HW), value (B, 1)).
 
         Args:
-            obs: (B, C, H, W) float observation tensor.
+            obs: (B, C, H, W) memory-augmented float observation tensor (C = 31).
             valid_moves: (B, H, W, 4) bool mask of legal moves (True = legal).
         """
+        # Normalize the augmented channels in place on a clone (the input may alias
+        # a numpy buffer shared with the rollout/PPO-update arrays).
+        obs = obs.clone()
+        obs[:, [0, 1, 2, 3, 18, 20] + list(range(22, obs.shape[1]))] /= 250.0  # armies
+        obs[:, 14] /= 300.0                                                     # timestep
+        obs[:, [17, 19]] /= 100.0                                               # land counts
+
         x = self.backbone(obs)
         logits = self.policy_head(x)                       # (B, 9, H, W)
         B, _, H, W = logits.shape

@@ -7,8 +7,8 @@ Usage:
   # Public 1v1 queue (plays ranked-ish games against humans/bots)
   python deploy.py --user-id <SECRET> --one-v1 --public --username "[Bot] PPOBot"
 
-The policy must be trained with the fog-memory observation (FastGame patches);
-`DeployPPOAgent` re-injects the general memory and structure-type memory on the
+The policy is trained on the memory-augmented observation (31 channels); the
+in-network `MemoryAugmenter` (agents/memory_aug.py) provides the fog memory on the
 live observation so training and deployment see the same input. `user_id` is
 the secret code from your generals.io account settings.
 """
@@ -112,7 +112,7 @@ def main() -> None:
         p.error("--one-v1 requires --public: the 1v1 queue is on the public server (ws.generals.io)")
 
     agent = load_agent(args.model, args.device, verbose=args.verbose)
-    print(f"Loaded {args.model} -> DeployPPOAgent (pad_to={config.PAD_TO}, greedy, fog-memory injection)")
+    print(f"Loaded {args.model} -> DeployPPOAgent (pad_to={config.PAD_TO}, greedy, in-network memory)")
 
     with SafeGeneralsIOClient(agent, args.user_id, public_server=args.public) as client:
         if args.bot_key:

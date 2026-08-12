@@ -1,15 +1,21 @@
 """Generate a behavior-cloning dataset from rule-based bot self-play.
 
-Player 0 is the demonstrator (ExpanderAgent), player 1 is a bot opponent.
-For each step we record the player-0 (observation, valid-move-mask, action)
-tuple in the exact format the RL policy consumes, so the data can warm-start
-PPO via supervised pretraining (train/pretrain.py).
+Player 0 is the demonstrator (ExpanderAgent or HumanExeAgent), player 1 is a bot
+opponent. For each step we record the player-0 (observation, valid-move-mask,
+action) tuple in the exact format the RL policy consumes, so the data can warm-start
+PPO via supervised pretraining (train/pretrain.py). Observations are the
+31-channel memory-augmented tensor (paper arXiv:2507.06825) that the policy is
+trained on.
 
 Data is generated with the patched generals.io army growth (FastGame) so it
-matches the RL training dynamics.
+matches the RL training dynamics. Only steps whose demonstrator action is valid
+(per the move mask) are kept, matching the paper's "behavioral cloning on valid
+moves only".
 
 Usage:
     python train/generate_data.py --out checkpoints/dataset.npz --games 120
+    python train/generate_data.py --demonstrator human_exe --games 50 \
+        --grid-min 18 --grid-max 20 --pad-to 24 --out checkpoints/dataset_hx.npz
 """
 from __future__ import annotations
 
@@ -19,11 +25,13 @@ import time
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from agents.game_patch import FastGame
+from agents.memory_aug import MemoryAugmenter
 from agents.network import encode_action
 from generals.agents.expander_agent import ExpanderAgent
 from generals.agents.random_agent import RandomAgent
@@ -41,6 +49,17 @@ def make_grid_factory(cfg) -> GridFactory:
     )
 
 
+def _is_valid_action(action, mask) -> bool:
+    """True if `action` ([pass,row,col,dir,split]) is legal under the (P,P,4) mask."""
+    action = np.asarray(action, dtype=np.int32)
+    if action[0] == 1:  # pass is always legal
+        return True
+    r, c, d = int(action[1]), int(action[2]), int(action[3])
+    if r < 0 or c < 0 or r >= mask.shape[0] or c >= mask.shape[1]:
+        return False
+    return bool(mask[r, c, d])
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out", default="checkpoints/dataset.npz")
@@ -50,6 +69,8 @@ def main():
     p.add_argument("--grid-max", type=int, default=None)
     p.add_argument("--pad-to", type=int, default=None)
     p.add_argument("--truncation", type=int, default=None)
+    p.add_argument("--demonstrator", type=str, default="expander",
+                   choices=["expander", "human_exe"])
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
@@ -63,36 +84,49 @@ def main():
 
     rng = np.random.default_rng(args.seed)
     grid_factory = make_grid_factory(config)
-    demonstrators = [ExpanderAgent("A")]
     opponents = [ExpanderAgent("B"), RandomAgent("B")]
 
-    # Preallocate (memory-safe up to max_samples; ~35 KB per sample at P=24).
+    # Preallocate (memory-safe up to max_samples; ~28 KB per sample at P=24, 31 ch).
     max_samples = args.max_samples
-    obs_arr = np.zeros((max_samples, 15, P, P), dtype=np.float32)
+    obs_arr = np.zeros((max_samples, config.INPUT_CHANNELS, P, P), dtype=np.float32)
     mask_arr = np.zeros((max_samples, P, P, 4), dtype=bool)
     act_arr = np.zeros((max_samples,), dtype=np.int64)
+
+    augmenter = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
 
     n = 0
     t0 = time.time()
     for g in range(args.games):
-        demo = demonstrators[g % len(demonstrators)]
+        # Fresh stateful demonstrator per game.
+        if args.demonstrator == "human_exe":
+            from agents.human_exe_agent import HumanExeAgent
+            demo = HumanExeAgent(player_id="A")
+        else:
+            demo = ExpanderAgent("A")
         opp = opponents[g % len(opponents)]
         grid = grid_factory.generate()
         game = FastGame(grid, ["A", "B"])
-        demo.reset()
         opp.reset()
+        augmenter._mem = {}  # fresh memory per game
 
         for _ in range(T):
             oa = game.agent_observation("A")
             ob = game.agent_observation("B")
-            act_a = demo.act(oa)
+            if args.demonstrator == "human_exe":
+                act_a = demo.act_on_game(game, "A")
+            else:
+                act_a = demo.act(oa)
             act_b = opp.act(ob)
 
             obs_t = np.asarray(oa.as_tensor(pad_to=P), dtype=np.float32)
             mask_t = np.asarray(compute_valid_move_mask(oa), dtype=bool)
+            if not _is_valid_action(act_a, mask_t):
+                continue  # keep valid demonstrator moves only
+            with torch.no_grad():
+                obs_aug = augmenter.augment_observation(torch.from_numpy(obs_t[None]))
             act_idx = int(encode_action(np.asarray(act_a, dtype=np.int32), P))
 
-            obs_arr[n] = obs_t
+            obs_arr[n] = obs_aug[0].numpy()
             mask_arr[n] = mask_t
             act_arr[n] = act_idx
             n += 1

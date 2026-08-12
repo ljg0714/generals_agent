@@ -39,7 +39,10 @@ CITY_DENSITY = 0.02
 # ---------------------------------------------------------------------------
 # Network
 # ---------------------------------------------------------------------------
-INPUT_CHANNELS = 15         # generals-bots observation has 15 channels
+# Memory-augmented observation (paper arXiv:2507.06825): 23 base/memory channels
+# + 2 * MEMORY_HISTORY_SIZE per-side army-delta move-history stacks.
+INPUT_CHANNELS = 31         # 23 + 2 * MEMORY_HISTORY_SIZE
+MEMORY_HISTORY_SIZE = 4     # per-side history length in the augmented observation
 HIDDEN_CHANNELS = (32, 32, 32, 16)
 VALUE_HIDDEN = 64
 

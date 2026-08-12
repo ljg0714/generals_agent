@@ -1,0 +1,167 @@
+from __future__ import annotations
+from dataclasses import dataclass
+import typing
+
+import logbook
+
+import SearchUtils
+from Path import Path
+from base.client.tile import Tile
+
+
+@dataclass(slots=True)
+class FogTileRevert:
+    tile: Tile
+    army: int
+    player: int
+    isTempFogPrediction: bool
+
+
+class Army(object):
+    start = 'A'
+    end = 'z'
+    curLetter = start
+
+    @staticmethod
+    def get_letter():
+        ch = Army.curLetter
+        if ord(ch) + 1 > ord(Army.end):
+            Army.curLetter = Army.start
+        else:
+            Army.curLetter = chr(ord(ch) + 1)
+            while Army.curLetter in ['[', '\\', ']', '^', '_', '`']:
+                Army.curLetter = chr(ord(Army.curLetter) + 1)
+        return ch
+
+    def __init__(self, tile: Tile, name: str | None = None):
+        self.tile: Tile = tile
+        self.path: Path = Path()
+        self.player: int = tile.player
+        self.visible: bool = tile.visible
+        self.value: int = 0
+        """Always the value of the tile, minus one. For some reason."""
+        self.update_tile(tile)
+        self.expectedPaths: typing.List[Path] = []
+        self.entangledArmies: typing.List[Army] = []
+        self.name: str = name
+        if not name:
+            self.name = Army.get_letter()
+
+        self.entangledValue = None
+        self.scrapped = False
+        self.last_moved_turn: int = 0
+        self.last_seen_turn: int = 0
+        self.fogTileReverts: typing.Dict[Tile, FogTileRevert] = {}
+
+    # # for debugging
+    # @property
+    # def last_seen_turn(self) -> int:
+    #     return self._last_seen_turn
+    #
+    # @last_seen_turn.setter
+    # def last_seen_turn(self, value: int):
+    #     self._last_seen_turn = value
+
+    def update_tile(self, tile):
+        if self.path.tail is None or self.path.tail.tile != tile:
+            self.path.add_next(tile)
+
+        if self.tile != tile:
+            self.tile = tile
+
+        self.update()
+
+    def update(self):
+        if self.tile.visible:
+            self.value = self.tile.army - 1
+            self.entangledValue = None
+        self.visible = self.tile.visible
+
+    def get_split_for_fog(self, fogTiles: typing.List[Tile]) -> typing.List[Army]:
+        split = []
+        if self.entangledValue is None:
+            self.entangledValue = self.value
+        for tile in fogTiles:
+            splitArmy = self.clone()
+            splitArmy.entangledValue = self.value
+            if self.entangledValue is not None:
+                splitArmy.entangledValue = self.entangledValue
+            split.append(splitArmy)
+        # entangle the armies
+        for existingEntangled in self.entangledArmies:
+            existingEntangled.entangledArmies.extend(split)
+        for splitBoi in split:
+            splitBoi.entangledArmies.extend(SearchUtils.where(split, lambda army: army != splitBoi))
+        logbook.info(f"for army {str(self)} set self as scrapped because splitting for fog")
+        self.scrapped = True
+        return split
+
+    def clone(self):
+        newDude = Army(self.tile, self.name)
+        if self.path is not None:
+            newDude.path = self.path.clone()
+        newDude.player = self.player
+        newDude.visible = self.visible
+        newDude.value = self.value
+        newDude.last_moved_turn = self.last_moved_turn
+        newDude.last_seen_turn = self.last_seen_turn
+        newDude.fogTileReverts = dict(self.fogTileReverts)
+        for path in self.expectedPaths:
+            clone = path.clone()
+            if clone is None:
+                raise "What the fuck?"
+            newDude.expectedPaths.append(clone)
+        newDude.entangledArmies = list(self.entangledArmies)
+        newDude.scrapped = self.scrapped
+        return newDude
+
+    def record_fog_tile_revert(self, tile: Tile):
+        if tile not in self.fogTileReverts:
+            self.fogTileReverts[tile] = FogTileRevert(tile, tile.army, tile.player, tile.isTempFogPrediction)
+
+    def absorb_fog_tile_reverts(self, other: Army):
+        for tile, revert in other.fogTileReverts.items():
+            if tile not in self.fogTileReverts:
+                self.fogTileReverts[tile] = revert
+
+    def toString(self):
+        return f"[{self.name} {self.tile} p{self.player} v{self.value}{' scr' if self.scrapped else ''}]"
+
+    def __str__(self):
+        return self.toString()
+
+    def __repr__(self):
+        return self.toString()
+
+    def include_path(self, path: Path):
+        if path is None:
+            return
+
+        foundMatch = False
+        for existingPath in self.expectedPaths:
+            if existingPath is None:
+                self.expectedPaths.remove(existingPath)
+                continue
+            pathNode = path.start
+            existingPathNode = existingPath.start
+
+
+            isPathMatch = True
+            while pathNode is not None and existingPathNode is not None:
+                if pathNode.tile != existingPathNode.tile:
+                    isPathMatch = False
+                    break
+
+                pathNode = pathNode.next
+                existingPathNode = existingPathNode.next
+
+            if pathNode is not None or existingPathNode is not None:
+                # then one was longer than the other, also false
+                isPathMatch = False
+
+            if isPathMatch:
+                foundMatch = True
+                break
+
+        if not foundMatch and path is not None:
+            self.expectedPaths.append(path)

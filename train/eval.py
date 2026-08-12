@@ -18,6 +18,13 @@ from generals.agents.expander_agent import ExpanderAgent
 from generals.agents.random_agent import RandomAgent
 from generals.core.grid import GridFactory
 
+try:
+    from agents.human_exe_agent import HumanExeAgent
+    _HAS_HUMAN_EXE = True
+except Exception:
+    HumanExeAgent = None
+    _HAS_HUMAN_EXE = False
+
 
 def make_grid_factory(cfg) -> GridFactory:
     return GridFactory(
@@ -45,6 +52,9 @@ def evaluate(network, cfg, num_games: int = 20, opponents=None, device="cpu",
         wins = losses = draws = 0
         lengths = []
         for _ in range(num_games):
+            # HumanExeAgent is stateful per game -> a fresh instance each game.
+            if _HAS_HUMAN_EXE and isinstance(opp, HumanExeAgent):
+                opp = HumanExeAgent(player_id="agent_1")
             env = GeneralsEnv(opponent=opp, grid_factory=make_grid_factory(cfg),
                               pad_observations_to=cfg.PAD_TO, truncation=cfg.TRUNCATION)
             env.reset(seed=int(rng.integers(0, 2**31)))
@@ -52,7 +62,10 @@ def evaluate(network, cfg, num_games: int = 20, opponents=None, device="cpu",
             length = 0
             while not done:
                 a0 = policy.act_batched(env.last_obs[None], env.last_mask[None])[0]
-                a1 = opp.act(env.opponent_observation())
+                if _HAS_HUMAN_EXE and isinstance(opp, HumanExeAgent):
+                    a1 = opp.act_on_game(env._env.game, env.opponent_id)
+                else:
+                    a1 = opp.act(env.opponent_observation())
                 _, _, term, trunc, info0 = env.step(a0, a1)
                 done = term or trunc
                 length += 1
@@ -90,7 +103,8 @@ def main() -> None:
     p.add_argument("--grid-min", type=_parse_dims, default=None, help="min grid, e.g. 18 or 18,19")
     p.add_argument("--grid-max", type=_parse_dims, default=None, help="max grid, e.g. 20 or 20,20")
     p.add_argument("--games", type=int, default=20)
-    p.add_argument("--opponents", default="random,expander", help="comma-separated: random,expander")
+    p.add_argument("--opponents", default="random,expander",
+                   help="comma-separated: random,expander,human_exe")
     p.add_argument("--greedy", action="store_true", help="greedy (deterministic) actions")
     p.add_argument("--device", default="cpu")
     p.add_argument("--seed", type=int, default=0)
@@ -126,6 +140,11 @@ def main() -> None:
             opponents.append(RandomAgent())
         elif name == "expander":
             opponents.append(ExpanderAgent())
+        elif name == "human_exe":
+            if not _HAS_HUMAN_EXE:
+                raise ValueError("human_exe opponent requires the vendored bot deps "
+                                 "(logbook, ortools, disjoint-set, unionfind)")
+            opponents.append(HumanExeAgent(player_id="agent_1"))
         else:
             raise ValueError(f"unknown opponent: {name}")
 

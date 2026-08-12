@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import importlib
+import pathlib
+import subprocess
+import sys
+import typing
+
+
+_MODULE_NAME = 'maxflow'
+_SUBMODULE_DIR = pathlib.Path(__file__).resolve().parent / 'third_party' / 'PyMaxflow'
+_STALE_ARTIFACT_GLOB = '_maxflow*.pyd'
+_SOURCE_FILE_PATTERNS = ('setup.py', 'pyproject.toml', 'maxflow/**/*.pyx', 'maxflow/**/*.pxd', 'maxflow/**/*.h', 'maxflow/**/*.hpp', 'maxflow/**/*.cpp')
+_PYTHON_ABI_TAG = f'cp{sys.version_info.major}{sys.version_info.minor}'
+
+
+def _import_local_pymaxflow():
+    module_dir = str(_SUBMODULE_DIR)
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+    return importlib.import_module(_MODULE_NAME)
+
+
+def _clear_local_pymaxflow_modules():
+    stale_module_names = [name for name in sys.modules.keys() if name == _MODULE_NAME or name.startswith(f'{_MODULE_NAME}.')]
+    for stale_module_name in stale_module_names:
+        sys.modules.pop(stale_module_name, None)
+
+
+def _build_local_pymaxflow_inplace():
+    subprocess.run(
+        [sys.executable, 'setup.py', 'build_ext', '--inplace', '--verbose'],
+        cwd=_SUBMODULE_DIR,
+        check=True,
+    )
+
+
+def _get_local_pymaxflow_artifact() -> pathlib.Path | None:
+    artifacts = sorted(
+        (
+            path for path in (_SUBMODULE_DIR / 'maxflow').glob(_STALE_ARTIFACT_GLOB)
+            if _PYTHON_ABI_TAG in path.name
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True
+    )
+    if artifacts:
+        return artifacts[0]
+    return None
+
+
+def _iter_local_pymaxflow_source_files() -> typing.Iterable[pathlib.Path]:
+    for pattern in _SOURCE_FILE_PATTERNS:
+        yield from _SUBMODULE_DIR.glob(pattern)
+
+
+def _should_rebuild_local_pymaxflow() -> bool:
+    artifact = _get_local_pymaxflow_artifact()
+    if artifact is None or not artifact.exists():
+        return True
+
+    artifact_mtime = artifact.stat().st_mtime
+    for source_file in _iter_local_pymaxflow_source_files():
+        if source_file.is_file() and source_file.stat().st_mtime > artifact_mtime:
+            return True
+
+    return False
+
+
+def _load_local_pymaxflow():
+    if _should_rebuild_local_pymaxflow():
+        _clear_local_pymaxflow_modules()
+        _build_local_pymaxflow_inplace()
+        importlib.invalidate_caches()
+
+    _clear_local_pymaxflow_modules()
+    return _import_local_pymaxflow()
+
+
+try:
+    maxflow = _load_local_pymaxflow()
+except (ModuleNotFoundError, ImportError):
+    try:
+        _clear_local_pymaxflow_modules()
+        _build_local_pymaxflow_inplace()
+        importlib.invalidate_caches()
+        _clear_local_pymaxflow_modules()
+        maxflow = _import_local_pymaxflow()
+    except Exception as build_ex:
+        stale_artifacts = sorted(path.name for path in (_SUBMODULE_DIR / 'maxflow').glob(_STALE_ARTIFACT_GLOB))
+        stale_artifacts_msg = ''
+        if stale_artifacts:
+            stale_artifacts_msg = f" Found existing compiled artifacts: {', '.join(stale_artifacts)}."
+        raise ImportError(
+            f"Could not import local PyMaxflow package '{_MODULE_NAME}'. "
+            f"Attempted to build it in-place with `{sys.executable} setup.py build_ext --inplace` in `{_SUBMODULE_DIR}`, "
+            f"but that did not produce an importable module.{stale_artifacts_msg}"
+        ) from build_ex
+
+
+Graph = maxflow.Graph
+GraphInt = maxflow.GraphInt
+GraphFloat = maxflow.GraphFloat
+
+
+def __getattr__(name: str) -> typing.Any:
+    return getattr(maxflow, name)

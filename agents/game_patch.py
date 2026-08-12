@@ -19,10 +19,14 @@
    computes a huge negative frame time and `SDL_Delay()`s for ~the previous
    episode's duration — play.py appears frozen at episode 2. `patch_gui_clock()`
    gives each `Properties` instance its own fresh Clock.
+
+NOTE: The base env's fog re-hides explored cells every step (visibility = 3x3 of
+current owned cells). Real generals.io reveals explored cells permanently. That
+memory is now provided by the in-network `MemoryAugmenter` (agents/memory_aug.py)
+— channels for seen generals/cities/mountains persist inside the network — so
+`FastGame` no longer injects procedural memory into the observation channels.
 """
 from __future__ import annotations
-
-import numpy as np
 
 import config as _cfg
 from generals.core.game import Game
@@ -35,25 +39,6 @@ class FastGame(Game):
         super().__init__(grid, agents)
         self.increment_rate = _cfg.ARMY_INCREMENT_RATE
         self.city_growth_period = _cfg.CITY_GROWTH_PERIOD
-        # General positions (own + opponent) are remembered once seen, even
-        # after they re-enter fog. The env recomputes visibility every step
-        # from CURRENT owned cells (3x3 filter), so retreating re-fogs ground
-        # you explored and the opponent's general vanishes from the observation
-        # entirely — a feedforward CNN then can't recall where to strike.
-        # Real generals.io reveals explored cells permanently; this mask
-        # restores that memory on channel 1 (generals) with no channel-count
-        # change. Generals never relocate in this env, so a seen position stays
-        # valid for the whole game. The deployment harness injects the same
-        # memory into the model's input, so training and deployment stay aligned.
-        self._seen_generals = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
-        # Structure-TYPE memory. In real generals.io the terrain layout is
-        # visible through fog (the base env already marks every fogged
-        # structure position in channel 8 — positions are known, type is not),
-        # but once a cell has been explored you remember whether it is a
-        # mountain or a city even after it re-fogs. Track the cells ever seen
-        # and pin the remembered type into channels 3/2 (mountains/cities).
-        # Unexplored structures stay type-unknown (only channel 8).
-        self._seen_cells = {a: np.zeros(self.grid_dims, dtype=bool) for a in self.agents}
 
     def _global_game_update(self):
         owners = self.agents
@@ -66,30 +51,6 @@ class FastGame(Game):
             update_mask = self.channels.generals + self.channels.cities
             for owner in owners:
                 self.channels.armies += update_mask * self.channels.ownership[owner]
-
-    def agent_observation(self, agent):
-        """Base observation plus fog memory: seen generals persist, and
-        explored cells remember their structure type (mountain vs city)."""
-        obs = super().agent_observation(agent)
-        # Generals (own + opponent) stay visible once seen, even after their
-        # cells re-fog — the deployment harness injects the same memory into
-        # the model's input. `Observation` is a dataclass; attribute
-        # assignment works (there is no `__setitem__`).
-        visible_generals = np.asarray(obs.generals, dtype=bool)
-        self._seen_generals[agent] |= visible_generals
-        obs.generals = self._seen_generals[agent]
-        # Structure-type memory: pin the remembered type of every seen cell
-        # into channels 3/2 (mountains/cities). Channel 8 (structures_in_fog)
-        # is left as the base env computes it — it keeps marking ALL fogged
-        # structure positions (known), just without the type. Making seen
-        # mountains visible in fog also lets compute_valid_move_mask block
-        # moves into them, which matches the real game.
-        visible = np.asarray(self.channels.get_visibility(agent), dtype=bool)
-        self._seen_cells[agent] |= visible
-        seen = self._seen_cells[agent]
-        obs.cities = np.asarray(self.channels.cities, dtype=bool) & seen
-        obs.mountains = np.asarray(self.channels.mountains, dtype=bool) & seen
-        return obs
 
 
 def patch_env_growth():

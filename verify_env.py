@@ -36,14 +36,49 @@ def test_encode_decode():
 
 
 def test_network():
-    net = PolicyValueNetwork(input_channels=15, grid_size=config.PAD_TO)
-    obs = np.zeros((2, 15, config.PAD_TO, config.PAD_TO), np.float32)
+    net = PolicyValueNetwork(input_channels=config.INPUT_CHANNELS, grid_size=config.PAD_TO)
+    obs = np.zeros((2, config.INPUT_CHANNELS, config.PAD_TO, config.PAD_TO), np.float32)
     mask = np.zeros((2, config.PAD_TO, config.PAD_TO, 4), np.bool_)
     mask[:, :, :, 0] = True
     logits, value = net(torch.from_numpy(obs), torch.from_numpy(mask))
     assert logits.shape == (2, 9 * config.PAD_TO * config.PAD_TO)
     assert value.shape == (2, 1)
-    print(f"[OK] network forward: logits {tuple(logits.shape)}, value {tuple(value.shape)}")
+    print(f"[OK] network forward ({config.INPUT_CHANNELS}ch): logits "
+          f"{tuple(logits.shape)}, value {tuple(value.shape)}")
+
+
+def test_memory_aug():
+    from agents.memory_aug import MemoryAugmenter
+
+    P = config.PAD_TO
+    aug = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
+    # Sample 0 starts a new game (timestep 0); sample 1 is mid-game (timestep 5).
+    obs0 = np.zeros((2, 15, P, P), np.float32)
+    obs0[:, 5, P // 2, P // 2] = 1    # owned cell
+    obs0[:, 0, P // 2, P // 2] = 10   # army on it
+    obs0[0, 13] = 0
+    obs0[1, 13] = 5
+
+    aug1 = aug.augment_observation(torch.from_numpy(obs0))
+    assert aug1.shape == (2, config.INPUT_CHANNELS, P, P)
+    # seen (ch 4) marks the owned cell for both samples.
+    assert aug1[0, 4, P // 2, P // 2] == 1.0
+    assert aug1[1, 4, P // 2, P // 2] == 1.0
+    # army_stack[0] (ch 23) at the owned cell = current_army - last(0) = 10.
+    assert aug1[0, 23, P // 2, P // 2] == 10.0
+    assert aug1[1, 23, P // 2, P // 2] == 10.0
+
+    # Second call: sample 0 resets again (timestep 0) -> delta = 10 - 0;
+    # sample 1 persists (timestep 6) -> last_army=10, no change -> delta = 0.
+    obs1 = obs0.copy()
+    obs1[0, 13] = 0
+    obs1[1, 13] = 6
+    aug2 = aug.augment_observation(torch.from_numpy(obs1))
+    assert aug2[0, 23, P // 2, P // 2] == 10.0
+    assert aug2[1, 23, P // 2, P // 2] == 0.0
+    # seen persists across steps for the mid-game sample.
+    assert aug2[1, 4, P // 2, P // 2] == 1.0
+    print("[OK] memory augmentation: shape, reset-on-timestep-0, persistence")
 
 
 def test_env():
@@ -57,12 +92,14 @@ def test_env():
     assert obs.shape == (15, config.PAD_TO, config.PAD_TO)
     assert info["masks"].shape == (config.PAD_TO, config.PAD_TO, 4)
 
-    net = PolicyValueNetwork(input_channels=15, grid_size=config.PAD_TO)
+    net = PolicyValueNetwork(input_channels=config.INPUT_CHANNELS, grid_size=config.PAD_TO)
     done = False
     steps = 0
     term = trunc = False
     while not done and steps < 400:
-        logits, _ = net(torch.from_numpy(env.last_obs[None]), torch.from_numpy(env.last_mask[None]))
+        with torch.no_grad():
+            obs_aug = net.augment_observation(torch.from_numpy(env.last_obs[None]))
+            logits, _ = net(obs_aug, torch.from_numpy(env.last_mask[None]))
         idx = torch.distributions.Categorical(logits=logits).sample().numpy()
         act0 = decode_actions(idx, config.PAD_TO)[0]
         act1 = env.opponent.act(env.opponent_observation())
@@ -85,5 +122,6 @@ def test_env():
 if __name__ == "__main__":
     test_encode_decode()
     test_network()
+    test_memory_aug()
     test_env()
     print("\nAll environment checks passed.")

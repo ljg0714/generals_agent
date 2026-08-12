@@ -11,3 +11,14 @@ generals-bots==2.5.0
 gymnasium>=1.0.0
 tensorboard>=2.18.0
 numpy>=2.1.0
+
+# human_exe (vendored EklipZ bot) — needed only for:
+#   train/generate_data.py --demonstrator human_exe
+#   train/train.py --use-human-exe-opponent
+#   train/eval.py --opponents human_exe
+# (pcst_fast has no win_amd64/py3.12 wheel and is patched out in the vendored copy.)
+logbook
+ortools
+disjoint-set
+unionfind
+networkx

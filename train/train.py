@@ -39,6 +39,14 @@ from generals.core.grid import GridFactory
 from train.eval import evaluate
 from train.self_play import OpponentPool
 
+# human_exe (vendored EklipZ bot) is optional: default training doesn't need it.
+try:
+    from agents.human_exe_agent import HumanExeAgent
+    _HAS_HUMAN_EXE = True
+except Exception:
+    HumanExeAgent = None
+    _HAS_HUMAN_EXE = False
+
 
 # ---------------------------------------------------------------------------
 # Environment helpers
@@ -86,7 +94,11 @@ def curriculum_stage_dims(cfg, stage_idx):
 def sample_opponent(pool, bot_pool, selfplay_prob, rng):
     if len(pool) > 0 and rng.random() < selfplay_prob:
         return pool.sample()
-    return random.choice(bot_pool)
+    chosen = random.choice(bot_pool)
+    # HumanExeAgent is stateful per game -> a fresh instance per env.
+    if _HAS_HUMAN_EXE and isinstance(chosen, HumanExeAgent):
+        return HumanExeAgent(player_id=chosen.player_id)
+    return chosen
 
 
 def selfplay_prob_at(cfg, iteration):
@@ -114,10 +126,17 @@ def compute_opponent_actions(envs, groups, pad_to):
             obs_list, mask_list = [], []
             for i in indices:
                 o = envs[i].opponent_observation()
+                # NOTE: as_tensor(pad_to=...) pads `o` IN PLACE, so it must run
+                # before compute_valid_move_mask(o) for the mask to be (P,P,4).
                 obs_list.append(np.asarray(o.as_tensor(pad_to=pad_to), dtype=np.float32))
                 mask_list.append(np.asarray(compute_valid_move_mask(o), dtype=bool))
-            acts = agent.act_batched(np.stack(obs_list), np.stack(mask_list))
+            # env_keys=indices isolates each env's memory inside the shared opponent.
+            acts = agent.act_batched(np.stack(obs_list), np.stack(mask_list), env_keys=list(indices))
             opp_actions[np.asarray(indices)] = acts
+        elif _HAS_HUMAN_EXE and isinstance(agent, HumanExeAgent):
+            for i in indices:
+                opp_actions[i] = np.asarray(
+                    agent.act_on_game(envs[i]._env.game, envs[i].opponent_id), dtype=np.int32)
         else:
             for i in indices:
                 o = envs[i].opponent_observation()
@@ -136,7 +155,7 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, self
     obs = np.stack([e.last_obs for e in envs]).astype(np.float32)
     masks = np.stack([e.last_mask for e in envs]).astype(bool)
 
-    buf_obs = np.zeros((T, N, 15, P, P), dtype=np.float32)
+    buf_obs = np.zeros((T, N, config.INPUT_CHANNELS, P, P), dtype=np.float32)
     buf_masks = np.zeros((T, N, P, P, 4), dtype=bool)
     buf_actions = np.zeros((T, N), dtype=np.int64)
     buf_logprobs = np.zeros((T, N), dtype=np.float32)
@@ -149,13 +168,15 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, self
     steps_since_reset = [0] * N
 
     for t in range(T):
-        buf_obs[t] = obs
         buf_masks[t] = masks
 
         obs_t = torch.from_numpy(obs).to(device)
         mask_t = torch.from_numpy(masks).to(device)
         with torch.no_grad():
-            logits, values = network(obs_t, mask_t)
+            # In-network memory augmentation: fold the raw obs into the 31-channel
+            # input, updating the network's per-env memory (auto-resets on timestep 0).
+            obs_aug = network.augment_observation(obs_t)
+            logits, values = network(obs_aug, mask_t)
             dist = Categorical(logits=logits)
             action_idx = dist.sample()
             logprob = dist.log_prob(action_idx)
@@ -163,6 +184,7 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, self
             logprob = logprob.cpu().numpy()
             values_np = values.squeeze(-1).cpu().numpy()
 
+        buf_obs[t] = obs_aug.cpu().numpy()
         buf_actions[t] = action_idx
         buf_logprobs[t] = logprob
         buf_values[t] = values_np
@@ -221,10 +243,10 @@ def collect_rollout(envs, opp_agents, network, pool, bot_pool, device, cfg, self
         obs = obs_next
         masks = np.stack([e.last_mask for e in envs]).astype(bool)
 
-    # Bootstrap values for the final observation
+    # Bootstrap values for the final observation (augmented the same way as the loop)
     with torch.no_grad():
-        _, next_values = network(torch.from_numpy(obs).to(device),
-                                 torch.from_numpy(masks).to(device))
+        obs_final = network.augment_observation(torch.from_numpy(obs).to(device))
+        _, next_values = network(obs_final, torch.from_numpy(masks).to(device))
     next_values = next_values.squeeze(-1).cpu().numpy()
 
     return (buf_obs, buf_masks, buf_actions, buf_logprobs, buf_values,
@@ -315,6 +337,8 @@ def parse_args():
     p.add_argument("--save-to-pool-interval", type=int, default=None)
     p.add_argument("--eval-games", type=int, default=20)
     p.add_argument("--no-curriculum", action="store_true", help="disable map-size curriculum")
+    p.add_argument("--use-human-exe-opponent", action="store_true",
+                   help="add human_exe (vendored EklipZ bot) to the self-play opponent pool")
     p.add_argument("--curriculum-eval-games", type=int, default=None)
     p.add_argument("--init-from-pretrained", type=str, default=None,
                    help="warm-start from a behavior-cloned policy (.pt from train/pretrain.py)")
@@ -416,6 +440,13 @@ def main():
     # Self-play pool + bots
     pool = OpponentPool(network, device=device, pad_to=config.PAD_TO, pool_size=config.POOL_SIZE)
     bot_pool = [RandomAgent(), ExpanderAgent(), RandomAgent(), ExpanderAgent()]
+    if args.use_human_exe_opponent:
+        if not _HAS_HUMAN_EXE:
+            sys.exit("--use-human-exe-opponent requires the vendored human_exe bot deps "
+                     "(logbook, ortools, disjoint-set, unionfind); see README.")
+        bot_pool.append(HumanExeAgent(player_id="agent_1"))
+        print("[human_exe] added to opponent pool (slow; sampled at 1/(len(bot_pool)) "
+              "of non-self-play choices)")
 
     # Environments
     envs, opp_agents = rebuild_envs(config, config.NUM_ENVS, pool, bot_pool, config.SEED,
