@@ -14,7 +14,7 @@ def solve_multiple_choice_knapsack_purepy(
         values: typing.List[int],
         groups: typing.List[int],
         noLog: bool = True,
-        longRuntimeThreshold = 0.005
+        longRuntimeThreshold = 1.0
 ) -> typing.Tuple[int, typing.List[typing.Any]]:
     """
     Solves knapsack where you need to knapsack a bunch of things, but must pick at most one thing from each group of things
