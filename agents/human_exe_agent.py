@@ -209,20 +209,24 @@ class HumanExeAgent:
                         player_map.generals[real.player] = pt
                         player_map.players[real.player].general = pt
                 else:
-                    pt.visible = False
+                    # generals.io reveals a once-seen general permanently (crown marker),
+                    # so keep remembered general tiles visible even behind fog.
+                    pt.visible = bool(pt.isGeneral)
                     # generals.io keeps owned territory visible; a tile behind fog is
                     # never ours. A previously-owned tile that was captured and re-fogged
                     # must not stay movable (else the bot moves from a tile it doesn't own).
                     if pt.player == player_index:
                         pt.player = -1
                     if not pt.discovered:
-                        # Undiscovered fog: plain fog, no remembered structure.
+                        # Undiscovered fog. Structure POSITIONS are public (the env's
+                        # structures_in_fog channel marks every fogged mountain/city), but
+                        # the type is unknown -> a plain obstacle. Non-structures are fog.
                         pt.army = 0
                         pt.player = -1
                         pt.isCity = False
                         pt.isMountain = False
                         pt.isGeneral = False
-                        pt.tile = TILE_FOG
+                        pt.tile = TILE_OBSTACLE if (real.isMountain or real.isCity) else TILE_FOG
 
         player_map.update_turn(int(game.time))
         infos = game.get_infos()
