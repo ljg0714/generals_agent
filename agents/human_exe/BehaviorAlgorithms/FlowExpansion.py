@@ -455,7 +455,14 @@ class ArmyFlowExpanderV2:
         if additional_options:
             external_options = self._convert_additional_options_to_external(additional_options, turns)
 
-        # Phase 0: Build flow graph
+        # Phase 0: Build flow graph. If no enemy island is visible (enemy general behind
+        # fog, no revealed enemy territory), the flow has nothing to attack — skip it and
+        # let the bot fall back to neutral expansion instead of crashing in the flow
+        # finders (our gymnasium env re-fogs explored tiles; generals.io reveals them).
+        if self.target_team >= 0 and not any(
+            i.team == self.target_team for i in islands.all_tile_islands
+        ):
+            return FlowExpansionPlanOptionCollection()
         with self.perf_timer.begin_move_event('V2 phase0 _ensure_flow_graph_exists'):
             self._ensure_flow_graph_exists(islands, turns, negativeTiles)
 

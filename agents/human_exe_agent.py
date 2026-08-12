@@ -172,8 +172,8 @@ class HumanExeAgent:
 
         # The bot's init_turn/find_move expect a move timer to be open.
         self.bot.perf_timer.begin_move(int(game.time))
-        self.bot.init_turn()
         try:
+            self.bot.init_turn()
             move = self.bot.find_move()
         except Exception:
             # The EklipZ bot has known latent bugs; a failed turn must degrade to a

@@ -42,7 +42,9 @@ class OrderedTileIslandSet(object):
         self._items.append(island)
 
     def sort(self):
-        self._items.sort(key=lambda i: i.tiles_by_army[0].tile_index)
+        # Vendored copy: an island can be momentarily empty during rebuild (its
+        # tiles all removed) and still sit in the collection; sort it first.
+        self._items.sort(key=lambda i: i.tiles_by_army[0].tile_index if i.tiles_by_army else -1)
 
     def discard(self, island: TileIsland):
         if island not in self._lookup:
@@ -267,9 +269,9 @@ class TileIslandBuilder(object):
     def _sort_island_collections(self):
         self.all_tile_islands.sort()
         for islands in self.tile_islands_by_player:
-            islands.sort(key=lambda i: i.tiles_by_army[0].tile_index)
+            islands.sort(key=lambda i: i.tiles_by_army[0].tile_index if i.tiles_by_army else -1)
         for islands in self.tile_islands_by_team_id:
-            islands.sort(key=lambda i: i.tiles_by_army[0].tile_index)
+            islands.sort(key=lambda i: i.tiles_by_army[0].tile_index if i.tiles_by_army else -1)
         for island in self.all_tile_islands:
             island.border_islands.sort()
 
