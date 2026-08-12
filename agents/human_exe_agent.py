@@ -209,9 +209,7 @@ class HumanExeAgent:
                         player_map.generals[real.player] = pt
                         player_map.players[real.player].general = pt
                 else:
-                    # generals.io reveals a once-seen general permanently (crown marker),
-                    # so keep remembered general tiles visible even behind fog.
-                    pt.visible = bool(pt.isGeneral)
+                    pt.visible = False
                     # generals.io keeps owned territory visible; a tile behind fog is
                     # never ours. A previously-owned tile that was captured and re-fogged
                     # must not stay movable (else the bot moves from a tile it doesn't own).
