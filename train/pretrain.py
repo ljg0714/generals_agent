@@ -34,6 +34,11 @@ def main():
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--device", type=str, default="auto")
+    p.add_argument("--init-from", type=str, default=None,
+                   help="warm-start from an existing pretrained checkpoint "
+                        "({model_state: ...}) before training on this dataset. "
+                        "Lets large datasets be consumed in stages (each fits in "
+                        "RAM) without a physical merge.")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.device != "cpu" else "cpu")
@@ -63,6 +68,12 @@ def main():
         grid_size=P,
         value_hidden=config.VALUE_HIDDEN,
     ).to(device)
+    if args.init_from:
+        st = torch.load(args.init_from, map_location=device)
+        if isinstance(st, dict) and "model_state" in st:
+            st = st["model_state"]
+        net.load_state_dict(st)
+        print(f"Warm-started from {args.init_from}")
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     best_acc = 0.0

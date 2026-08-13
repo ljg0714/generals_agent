@@ -3347,11 +3347,13 @@ class ArmyFlowExpanderV2:
                 (border_pair, details, ex)
                 for border_pair, details, ex in plan_errors
                 if "GATHER_CAPTURE_PLAN_NO_MOVE_ERROR" not in details['exception']
+                and type(ex).__name__ != "StopIteration"
             ]
 
             # Vendored copy: only raise on FATAL errors. Benign "no move available"
-            # plan errors (GATHER_CAPTURE_PLAN_NO_MOVE_ERROR) are normal on many
-            # gymnasium maps and must not crash the whole turn.
+            # plan errors (GATHER_CAPTURE_PLAN_NO_MOVE_ERROR) and empty path iterators
+            # (StopIteration) are normal on many gymnasium maps and must not crash the
+            # whole turn — they just mean no expansion plan for that island pair.
             if len(fatal_plan_errors) > 0:
                 all_errors_str = "\n\n".join([
                     f"{details['border_pair']}: {details['exception_type']}: {details['exception']}"

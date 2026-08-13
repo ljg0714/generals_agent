@@ -127,7 +127,7 @@ ABS_WEIGHT = 0.1
 # neutral ground. On big maps the own-growth terms reward expansion forever,
 # which stalls the game; the higher opp weight tilts the policy toward striking.
 ABS_OPP_WEIGHT = 0.2
-CASTLE_WEIGHT = 0.5
+CASTLE_WEIGHT = 0.4
 
 # Time-dependent terms — encourage attacking efficiency / shorter games.
 # DRAW_PENALTY: reward for a truncation draw. Smaller than a loss (-1) so a

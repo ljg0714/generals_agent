@@ -7,6 +7,13 @@ PPO via supervised pretraining (train/pretrain.py). Observations are the
 31-channel memory-augmented tensor (paper arXiv:2507.06825) that the policy is
 trained on.
 
+Self-play mode (`--demonstrator human_exe --opponent human_exe`) pits two
+HumanExeAgents against each other and records BOTH players' (observation, mask,
+action). Balanced games between two equal bots are rich in mid/late-game combat
+states that one-sided stomps vs Random/Expander never produce, so this is the
+right way to expand a dataset once the easy states are well covered. Each player
+keeps its own augmentation memory (augA/augB).
+
 Data is generated with the patched generals.io army growth (FastGame) so it
 matches the RL training dynamics. Only steps whose demonstrator action is valid
 (per the move mask) are kept, matching the paper's "behavioral cloning on valid
@@ -16,6 +23,9 @@ Usage:
     python train/generate_data.py --out checkpoints/dataset.npz --games 120
     python train/generate_data.py --demonstrator human_exe --games 50 \
         --grid-min 18 --grid-max 20 --pad-to 24 --out checkpoints/dataset_hx.npz
+    python train/generate_data.py --demonstrator human_exe --opponent human_exe \
+        --games 40 --grid-min 18 --grid-max 20 --pad-to 24 \
+        --out checkpoints/dataset_hx_sp.npz
 """
 from __future__ import annotations
 
@@ -78,6 +88,12 @@ def main():
     p.add_argument("--truncation", type=int, default=None)
     p.add_argument("--demonstrator", type=str, default="expander",
                    choices=["expander", "human_exe"])
+    p.add_argument("--opponent", type=str, default="mixed",
+                   choices=["mixed", "expander", "random", "human_exe"],
+                   help="player-B opponent. mixed (default): alternate Expander/"
+                        "Random as today. human_exe: self-play — both players are "
+                        "HumanExeAgents and BOTH sides are recorded (rich combat "
+                        "states; doubles sample yield per game).")
     p.add_argument("--save-every", type=int, default=10,
                    help="save a checkpoint every N games (crash-safe; default 10)")
     p.add_argument("--resume", action="store_true",
@@ -97,7 +113,15 @@ def main():
 
     rng = np.random.default_rng(args.seed)
     grid_factory = make_grid_factory(config)
-    opponents = [ExpanderAgent("B"), RandomAgent("B")]
+    if args.opponent == "mixed":
+        opponents = [ExpanderAgent("B"), RandomAgent("B")]
+    elif args.opponent == "expander":
+        opponents = [ExpanderAgent("B")]
+    elif args.opponent == "random":
+        opponents = [RandomAgent("B")]
+    else:  # human_exe: stateful per game, so a fresh instance is created in the loop
+        opponents = []
+    selfplay = args.opponent == "human_exe"
 
     # Preallocate (memory-safe up to max_samples; ~28 KB per sample at P=24, 31 ch).
     max_samples = args.max_samples
@@ -105,7 +129,24 @@ def main():
     mask_arr = np.zeros((max_samples, P, P, 4), dtype=bool)
     act_arr = np.zeros((max_samples,), dtype=np.int64)
 
-    augmenter = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
+    # Self-play records both players, so each side gets its own augmentation memory.
+    augA = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
+    augB = MemoryAugmenter(history_size=config.MEMORY_HISTORY_SIZE)
+
+    def record(o, act, aug):
+        """Append one (obs, mask, action) sample for a player. `n` is nonlocal."""
+        nonlocal n
+        obs_t = np.asarray(o.as_tensor(pad_to=P), dtype=np.float32)
+        mask_t = np.asarray(compute_valid_move_mask(o), dtype=bool)
+        if not _is_valid_action(act, mask_t):
+            return  # keep valid demonstrator moves only
+        with torch.no_grad():
+            obs_aug = aug.augment_observation(torch.from_numpy(obs_t[None]))
+        act_idx = int(encode_action(np.asarray(act, dtype=np.int32), P))
+        obs_arr[n] = obs_aug[0].numpy()
+        mask_arr[n] = mask_t
+        act_arr[n] = act_idx
+        n += 1
 
     n = 0
     games_started = 0
@@ -145,11 +186,16 @@ def main():
             demo = HumanExeAgent(player_id="A")
         else:
             demo = ExpanderAgent("A")
-        opp = opponents[g % len(opponents)]
+        if selfplay:
+            from agents.human_exe_agent import HumanExeAgent
+            opp = HumanExeAgent(player_id="B")  # stateful bot -> fresh per game
+        else:
+            opp = opponents[g % len(opponents)]
+            opp.reset()
         grid = grid_factory.generate()
         game = FastGame(grid, ["A", "B"])
-        opp.reset()
-        augmenter._mem = {}  # fresh memory per game
+        augA._mem = {}  # fresh memory per game
+        augB._mem = {}
 
         for _ in range(T):
             oa = game.agent_observation("A")
@@ -158,20 +204,14 @@ def main():
                 act_a = demo.act_on_game(game, "A")
             else:
                 act_a = demo.act(oa)
-            act_b = opp.act(ob)
+            if selfplay:
+                act_b = opp.act_on_game(game, "B")
+            else:
+                act_b = opp.act(ob)
 
-            obs_t = np.asarray(oa.as_tensor(pad_to=P), dtype=np.float32)
-            mask_t = np.asarray(compute_valid_move_mask(oa), dtype=bool)
-            if not _is_valid_action(act_a, mask_t):
-                continue  # keep valid demonstrator moves only
-            with torch.no_grad():
-                obs_aug = augmenter.augment_observation(torch.from_numpy(obs_t[None]))
-            act_idx = int(encode_action(np.asarray(act_a, dtype=np.int32), P))
-
-            obs_arr[n] = obs_aug[0].numpy()
-            mask_arr[n] = mask_t
-            act_arr[n] = act_idx
-            n += 1
+            record(oa, act_a, augA)
+            if selfplay:
+                record(ob, act_b, augB)
 
             game.step({"A": act_a, "B": act_b})
             if game.is_done() or n >= max_samples:

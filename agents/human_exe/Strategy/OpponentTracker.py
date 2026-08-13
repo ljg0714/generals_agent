@@ -428,7 +428,8 @@ class OpponentTracker(object):
                 if diff > 0:
                     probableLeftoverUngatheredTileArmyAmts = diff
                     teamStats.approximate_fog_army_available_total = toReduceTo
-                    self.view_info.add_info_line(f'Updated team {team} approx fog army from {oldTotal} to {teamStats.approximate_fog_army_available_total} (true total {teamStats.approximate_fog_army_available_total_true})')
+                    if self.view_info is not None:
+                        self.view_info.add_info_line(f'Updated team {team} approx fog army from {oldTotal} to {teamStats.approximate_fog_army_available_total} (true total {teamStats.approximate_fog_army_available_total_true})')
 
         expectedEfficiency = 0.9
         expectedTrueEfficiency = 0.85
@@ -479,9 +480,11 @@ class OpponentTracker(object):
                     probableLeftoverUngatheredTileArmyAmts -= actualToQueue
                     q.append(actualToQueue)
 
-            self.view_info.add_info_line(f"{msgBase}: " + " | ".join(actions))
+            if self.view_info is not None:
+                self.view_info.add_info_line(f"{msgBase}: " + " | ".join(actions))
 
-        self.view_info.add_info_line(f'Appended {team} attack history, len now {len(attackHist)}')
+        if self.view_info is not None:
+            self.view_info.add_info_line(f'Appended {team} attack history, len now {len(attackHist)}')
 
     def get_current_cycle_end_turn(self) -> int | None:
         """

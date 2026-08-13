@@ -27,6 +27,11 @@ _HX_DIR = Path(__file__).resolve().parent / "human_exe"
 if str(_HX_DIR) not in sys.path:
     sys.path.insert(0, str(_HX_DIR))
 
+# Every bot turn that hits one of its latent bugs gets its full traceback written
+# here (the console only shows the first few) — rare intermittent failures are
+# otherwise impossible to diagnose.
+_TRACEBACK_LOG = str(Path(__file__).resolve().parent.parent / "checkpoints" / "human_exe_tracebacks.log")
+
 # Headless: neutralize the EklipZ bot's file-logging (it also reads run_config.txt
 # from a repo-parent path that doesn't exist here). Must run before EklipZBot is used.
 from BotModules import BotLifecycle  # noqa: E402
@@ -177,10 +182,17 @@ class HumanExeAgent:
             move = self.bot.find_move()
         except Exception:
             # The EklipZ bot has known latent bugs; a failed turn must degrade to a
-            # pass rather than crash the game. Print only the first few tracebacks
-            # (for diagnosis) so a long run isn't flooded with identical errors.
+            # pass rather than crash the game. Every full traceback is written to a
+            # log file (rare intermittent bot bugs are hard to reproduce, so keep the
+            # evidence); only the first few are printed to the console.
+            import traceback
+            try:
+                with open(_TRACEBACK_LOG, "a", encoding="utf-8") as f:
+                    f.write(f"--- bot turn {game.time} ---\n")
+                    traceback.print_exc(file=f)
+            except Exception:
+                pass
             if getattr(self, "_error_count", 0) < self.max_tracebacks:
-                import traceback
                 traceback.print_exc()
             self._error_count = getattr(self, "_error_count", 0) + 1
             move = None
